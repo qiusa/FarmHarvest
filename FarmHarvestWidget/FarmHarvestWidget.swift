@@ -63,15 +63,17 @@ struct FarmHarvestWidgetEntryView: View {
             if entry.records.isEmpty {
                 Text("暂无记录").font(.caption).foregroundStyle(.secondary)
             } else {
-                GlassEffectContainer(spacing: 6) {
-                    ForEach(Array(entry.records.prefix(limit))) { r in
-                        FarmRow(r: r, now: entry.date, single: limit == 1)
-                    }
+                ForEach(Array(entry.records.prefix(limit))) { r in
+                    FarmRow(r: r, now: entry.date, single: limit == 1)
                 }
             }
+            Spacer(minLength: 0)
         }
         .padding(12)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        // macOS 26+ 强制要求：必须用 containerBackground 声明背景，
+        // 否则渲染失败并显示 "Please adopt container/Background API"。
+        .containerBackground(.background, for: .widget)
     }
 }
 
@@ -116,8 +118,10 @@ struct FarmRow: View {
                 }
             }
         }
-        .padding(10)
-        .glassEffect(in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .padding(8)
+        // Widget 内不宜用 glassEffect（材质在小组件里渲染不稳定），改半透明底色
+        .background(Color.primary.opacity(0.06),
+                    in: RoundedRectangle(cornerRadius: 10, style: .continuous))
     }
 
     private func hhmm(_ d: Date) -> String {
