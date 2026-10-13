@@ -16,7 +16,8 @@ struct Provider: TimelineProvider {
             let preview = CropStore.presets.map { p in
                 CropRecord(id: p.id, name: p.name, colorHex: p.colorHex, minutes: p.minutes,
                            plantedAt: now,
-                           harvestAt: now.addingTimeInterval(Double(p.minutes * 60)),
+                           harvests: [HarvestCycle(
+                               date: now.addingTimeInterval(Double(p.minutes * 60)))],
                            note: nil)
             }
             completion(FarmEntry(date: now, records: preview))
@@ -30,8 +31,10 @@ struct Provider: TimelineProvider {
         let now = Date()
         var entries: [FarmEntry] = []
 
-        // 每分钟刷新一次，覆盖到最远收获时间（最多 6 小时）
-        let horizon = records.map(\.harvestAt).max() ?? now.addingTimeInterval(3600)
+        // 每分钟刷新一次，覆盖到最远收获时间（最多 6 小时）。
+        // 必须取 allHarvests 的最大值：一���记录有多次采收时，最后一茬
+        // 才是真正的时间下界，只看 harvestAt 会导致后面几茬不刷新。
+        let horizon = records.flatMap(\.allHarvests).max() ?? now.addingTimeInterval(3600)
         let end = min(horizon, now.addingTimeInterval(6 * 3600))
         var t = now
         while t <= end {
@@ -82,7 +85,13 @@ struct FarmRow: View {
     let r: CropRecord
     let now: Date
     let single: Bool
-    private var ready: Bool { r.harvestAt <= now }
+    /// 倒计时对准下一茬（续期场景：上一茬收了还有下一茬）
+    private var displayHarvest: Date { r.nextHarvest ?? r.harvests.first?.date ?? r.plantedAt }
+    /// 可收获：有未收但已到点的茬
+    private var ready: Bool {
+        let n = now
+        return r.harvests.contains { !$0.harvested && $0.date <= n }
+    }
 
     var body: some View {
         HStack(spacing: 8) {
@@ -93,8 +102,18 @@ struct FarmRow: View {
                     .font(single ? .system(size: 14) : .system(size: 10))
                     .foregroundColor(.white))
             VStack(alignment: .leading, spacing: 2) {
-                Text(r.name).font(single ? .callout : .caption2).lineLimit(1)
-                Text(hhmm(r.harvestAt))
+                HStack(spacing: 4) {
+                    Text(r.name).font(single ? .callout : .caption2).lineLimit(1)
+                    // 有后续续期时标出还剩几茬
+                    if r.harvests.count > 1, !single {
+                        Text("+\(r.harvests.count - 1)")
+                            .font(.system(size: 9)).bold()
+                            .foregroundStyle(.secondary)
+                            .padding(.horizontal, 3).padding(.vertical, 1)
+                            .background(Color.primary.opacity(0.12), in: Capsule())
+                    }
+                }
+                Text(hhmm(displayHarvest))
                     .font(single ? .largeTitle : .headline).bold()
                     .foregroundColor(ready ? .orange : .primary)
                     .monospacedDigit()
@@ -131,7 +150,7 @@ struct FarmRow: View {
     }
 
     private func remain() -> String {
-        let s = max(0, Int(r.harvestAt.timeIntervalSince(now)))
+        let s = max(0, Int(displayHarvest.timeIntervalSince(now)))
         let h = s / 3600
         let m = (s % 3600) / 60
         let sec = s % 60

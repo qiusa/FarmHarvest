@@ -6,6 +6,23 @@ import os.log
 import WidgetKit
 #endif
 
+/// 一茬收菜（同一棵菜反复种续期时，每次采收是一个独立条目，可单独编辑）
+struct HarvestCycle: Codable, Equatable, Identifiable {
+    /// 稳定 id：列表行靠它做 Identifiable，编辑/删除都按 id 定位，不能用下标
+    var id: String
+    /// 这一茬的收菜时间
+    var date: Date
+    /// 是否已采收。续期场景必须区分「已收」和「已过期但还没收」：
+    /// 前者已归档，后者还在等用户去收（界面上高亮可收获）。
+    var harvested: Bool
+
+    init(id: String = UUID().uuidString, date: Date, harvested: Bool = false) {
+        self.id = id
+        self.date = date
+        self.harvested = harvested
+    }
+}
+
 /// 单条收菜记录（两种 target 共用，通过 App Group 的 UserDefaults 持久化）
 struct CropRecord: Identifiable, Codable, Equatable {
     let id: String
@@ -13,9 +30,100 @@ struct CropRecord: Identifiable, Codable, Equatable {
     let colorHex: String
     let minutes: Int
     let plantedAt: Date
-    let harvestAt: Date
+    /// 各茬收菜记录（反复续期）。升序；空数组仅可能来自异常数据。
+    var harvests: [HarvestCycle] = []
     /// 种菜备注说明（可选，可在编辑弹窗修改；旧数据无此字段时解码为 nil）
     var note: String?
+
+    /// 全部收菜时间，升序
+    var allHarvests: [Date] { harvests.map(\.date).sorted() }
+
+    /// 下一茬待收时间：未采收且尚未到点的那一茬里最早的时间
+    var nextHarvest: Date? {
+        let n = Date()
+        return harvests.filter { !$0.harvested && $0.date > n }.map(\.date).min()
+    }
+
+    /// 可收获：存在未采收、但时间已到的茬
+    var isReady: Bool {
+        let n = Date()
+        return harvests.contains { !$0.harvested && $0.date <= n }
+    }
+
+    /// 全部了结：每一茬都已采收或已过期。「清除已收获」只清这类，
+    /// 否则会误删还剩后续采收的记录。
+    var isFullyHarvested: Bool {
+        let n = Date()
+        return harvests.allSatisfy { $0.harvested || $0.date <= n }
+    }
+
+    /// 待收茬数
+    var pendingCount: Int {
+        let n = Date()
+        return harvests.filter { !$0.harvested && $0.date > n }.count
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case id, name, colorHex, minutes, plantedAt, harvests, note
+        // 旧字段：仅用于解码迁移，不再写入
+        case harvestAt, extraHarvests
+    }
+
+    /// 自定义解码：**必须**。
+    /// 1) Swift 合成的 Decodable 遇缺字段直接抛 keyNotFound，属性默认值管不到 Codable；
+    /// 2) 用户磁盘上同时存在两代历史格式（只有 harvestAt / 有 harvestAt+extraHarvests），
+    ///    都要迁移成 harvests，否则升级后老记录读不出来（load() 静默返回空数组 = 记录全丢）。
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(String.self, forKey: .id)
+        name = try c.decode(String.self, forKey: .name)
+        colorHex = try c.decode(String.self, forKey: .colorHex)
+        minutes = try c.decode(Int.self, forKey: .minutes)
+        plantedAt = try c.decode(Date.self, forKey: .plantedAt)
+        note = try c.decodeIfPresent(String.self, forKey: .note)
+
+        if let v = try c.decodeIfPresent([HarvestCycle].self, forKey: .harvests) {
+            harvests = v
+        } else {
+            // 迁移路径：harvestAt（必需）+ extraHarvests（可选）
+            let first = try c.decode(Date.self, forKey: .harvestAt)
+            let extras = try c.decodeIfPresent([Date].self, forKey: .extraHarvests) ?? []
+            harvests = ([first] + extras).sorted().map { HarvestCycle(date: $0) }
+        }
+    }
+
+    /// 显式编码：写了 init(from:) 后 Swift 不再合成 encode(to:)。
+    /// 只写新字段 harvests，harvestAt / extraHarvests 是迁移用的旧字段，
+    /// 继续写入会让文件同时存在两套时间，导入时反而歧义。
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(id, forKey: .id)
+        try c.encode(name, forKey: .name)
+        try c.encode(colorHex, forKey: .colorHex)
+        try c.encode(minutes, forKey: .minutes)
+        try c.encode(plantedAt, forKey: .plantedAt)
+        try c.encode(harvests, forKey: .harvests)
+        try c.encodeIfPresent(note, forKey: .note)
+    }
+
+    /// 显式成员初始化器：写了 init(from:) 后 Swift 不再合成它，构造点全靠这个
+    init(id: String, name: String, colorHex: String, minutes: Int,
+         plantedAt: Date, harvests: [HarvestCycle]? = nil,
+         extraHarvests: [Date] = [], note: String? = nil) {
+        self.id = id
+        self.name = name
+        self.colorHex = colorHex
+        self.minutes = minutes
+        self.plantedAt = plantedAt
+        if let h = harvests {
+            self.harvests = h
+        } else {
+            // 兼容旧的「首次时间 + 追加时间数组」调用方式
+            let base = plantedAt.addingTimeInterval(TimeInterval(minutes * 60))
+            self.harvests = ([base] + extraHarvests).sorted().map { HarvestCycle(date: $0) }
+        }
+        self.note = note
+    }
 }
 
 /// 蔬菜预设（默认成熟分钟数）
@@ -248,7 +356,7 @@ enum CropStore {
             colorHex: preset.colorHex,
             minutes: minutes,
             plantedAt: now,
-            harvestAt: now.addingTimeInterval(TimeInterval(minutes * 60)),
+            harvests: [HarvestCycle(date: now.addingTimeInterval(TimeInterval(minutes * 60)))],
             note: note
         )
         records.insert(rec, at: 0)
@@ -265,7 +373,7 @@ enum CropStore {
             colorHex: preset.colorHex,
             minutes: max(0, Int(harvestAt.timeIntervalSince(now) / 60)),
             plantedAt: now,
-            harvestAt: harvestAt,
+            harvests: [HarvestCycle(date: harvestAt)],
             note: note
         )
         records.insert(rec, at: 0)
@@ -279,6 +387,24 @@ enum CropStore {
             list[i] = updated
             save(list)
         }
+    }
+
+    /// 续期：在已有记录后追加一茬（新菜重复种，不必新建记录）
+    static func renew(_ record: CropRecord, after date: Date) {
+        var updated = record
+        updated.harvests.append(HarvestCycle(date: date))
+        updated.harvests.sort { $0.date < $1.date }
+        update(updated)
+    }
+
+    /// 标记/取消标记某一茬已采收。续期时用得上：收了这一茬，再续下一茬。
+    static func setHarvested(recordID: String, cycleID: String, _ harvested: Bool) {
+        var list = load()
+        guard let i = list.firstIndex(where: { $0.id == recordID }),
+              let j = list[i].harvests.firstIndex(where: { $0.id == cycleID })
+        else { return }
+        list[i].harvests[j].harvested = harvested
+        save(list)
     }
 
     // MARK: - 导入 / 导出

@@ -25,7 +25,17 @@ func formatDurationText(_ total: Int) -> String {
 }
 
 func remainText(_ r: CropRecord) -> String {
-    let s = max(0, Int(r.harvestAt.timeIntervalSinceNow))
+    // 有多次采收时，倒计时对准「下一茬」而不是首次，
+    // 否则首次过了之后会永远停在 00:00，看不出还要等多久收第二茬。
+    guard let next = r.nextHarvest else { return "可收获" }
+    return remainText(next)
+}
+
+/// 距离某个时间点还有多久。
+/// now 参数可选：实时倒计时场景应传入 TimelineView 的 context.date，
+/// 保持与「是否到期」的判定同源，否则两者会差出一次 tick 的误差。
+func remainText(_ target: Date, now: Date = Date()) -> String {
+    let s = max(0, Int(target.timeIntervalSince(now)))
     let h = s / 3600
     let m = (s % 3600) / 60
     let sec = s % 60
@@ -42,22 +52,33 @@ enum CropNotifier {
     }
 
     /// 依据当前记录重排"提前 1 分钟"的本地通知（每次记录变更都整表重排）
+    /// 一条记录可能有多个收菜时间点，每个都要单独排一条通知，
+    /// 且 identifier 必须带时间戳区分 —— 否则同一 id 的多次通知会互相覆盖，
+    /// 结果只有第一茬能收到提醒。
     static func reschedule(_ records: [CropRecord]) {
         let center = UNUserNotificationCenter.current()
         center.removeAllPendingNotificationRequests()
         let now = Date()
         for r in records {
-            let fire = r.harvestAt.addingTimeInterval(-60) // 提前 1 分钟
-            guard fire > now else { continue }
-            let content = UNMutableNotificationContent()
-            content.title = "\(r.name) 即将可收菜"
-            content.body = "还有 1 分钟 · 收菜时间 \(fmt(r.harvestAt))"
-            content.sound = .default
-            content.badge = 1
-            let secs = fire.timeIntervalSince(now)
-            let trigger = UNTimeIntervalNotificationTrigger(timeInterval: secs, repeats: false)
-            let req = UNNotificationRequest(identifier: "harvest-\(r.id)", content: content, trigger: trigger)
-            center.add(req)
+            for (idx, hAt) in r.allHarvests.enumerated() {
+                let fire = hAt.addingTimeInterval(-60) // 提前 1 分钟
+                guard fire > now else { continue }
+                let content = UNMutableNotificationContent()
+                let total = r.allHarvests.count
+                content.title = total > 1
+                    ? "\(r.name) 即将可收菜（第 \(idx + 1)/\(total) 次）"
+                    : "\(r.name) 即将可收菜"
+                content.body = "还有 1 分钟 · 收菜时间 \(fmt(hAt))"
+                content.sound = .default
+                content.badge = 1
+                let secs = fire.timeIntervalSince(now)
+                let trigger = UNTimeIntervalNotificationTrigger(timeInterval: secs, repeats: false)
+                // identifier 里带时间戳，保证多茬的请求不会互相替换
+                let req = UNNotificationRequest(
+                    identifier: "harvest-\(r.id)-\(Int(hAt.timeIntervalSince1970))",
+                    content: content, trigger: trigger)
+                center.add(req)
+            }
         }
     }
 }
@@ -381,11 +402,15 @@ struct ContentView: View {
 
     private var recordsPane: some View {
         VStack(alignment: .leading, spacing: 14) {
-            // 统计条：待收 / 已收获
-            HStack(spacing: 10) {
-                statTile(title: "待收", value: pendingCount, tint: .orange)
-                statTile(title: "可收获", value: readyCount, tint: .green)
-                statTile(title: "总计", value: records.count, tint: .accentColor)
+            // 统计条：待收 / 已收获。
+            // 这两个数字只会在「某茬跨越到期时刻」时突变，与秒级倒计时不同源，
+            // 所以用 5 秒粒度即可——比给整页套 1 秒刷新省 80% 的重绘开销。
+            TimelineView(.periodic(from: .now, by: 5)) { ctx in
+                HStack(spacing: 10) {
+                    statTile(title: "待收", value: countPending(at: ctx.date), tint: .orange)
+                    statTile(title: "可收获", value: countReady(at: ctx.date), tint: .green)
+                    statTile(title: "总计", value: records.count, tint: .accentColor)
+                }
             }
 
             HStack(spacing: 8) {
@@ -444,18 +469,32 @@ struct ContentView: View {
         .background(tint.opacity(0.10), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
     }
 
-    /// 已到收菜时间的记录数
+    /// 全部采收完毕的记录数（「清除已收获」清的是这类）。
+    /// 统计条用的是 countReady(at:)，这里供「清除已收获」按钮的可用性判断 ——
+    /// 按钮不需要秒级刷新，records 变化时重算即可。
     private var readyCount: Int {
-        records.filter { $0.harvestAt <= Date() }.count
+        records.filter { $0.isFullyHarvested }.count
     }
 
-    /// 尚未到收菜时间的记录数
-    private var pendingCount: Int { records.count - readyCount }
+    /// 指定时刻的「全部了结」记录数。
+    /// 统计条由 TimelineView 驱动，必须用传入的 ctx.date 判定，
+    /// 不能在内部再读 Date()，否则与触发刷新的时间点不一致。
+    private func countReady(at now: Date) -> Int {
+        records.filter { rec in
+            !rec.harvests.isEmpty
+                && rec.harvests.allSatisfy { $0.harvested || $0.date <= now }
+        }.count
+    }
 
-    /// 清除所有已到收菜时间的记录（带确认，避免误删）
+    private func countPending(at now: Date) -> Int {
+        records.count - countReady(at: now)
+    }
+
+    /// 清除所有已采完的记录（带确认，避免误删）
+    /// 注意：只删「所有采收时间都已到」的记录，还剩后续采收的必须留下。
     private func clearReadyRecords() {
         var remain = records
-        remain.removeAll { $0.harvestAt <= Date() }
+        remain.removeAll { $0.isFullyHarvested }
         guard remain.count != records.count else { return }
         CropStore.save(remain)
         records = CropStore.load()
@@ -547,13 +586,22 @@ struct RecordRow: View {
                 .frame(width: 36, height: 36)
                 .overlay(Text(String(r.name.prefix(1)))
                     .foregroundColor(.white).font(.subheadline.bold()))
-            VStack(alignment: .leading, spacing: 2) {
+            VStack(alignment: .leading, spacing: 4) {
                 Text(r.name).font(.subheadline.bold())
-                HStack(spacing: 4) {
-                    Text(fmt(r.harvestAt))
-                        .font(.caption).monospacedDigit()
-                        .foregroundStyle(r.harvestAt <= Date() ? Color.orange : Color.secondary)
+
+                // 每茬收菜时间单独一行：多茬时不再压缩成「第N茬」胶囊，
+                // 全部时间点直接铺开，方便一眼看清哪几茬已收、哪几茬还等着。
+                // 单茬时不画圆点 —— 一个孤零零的空心圈是噪音。
+                if r.harvests.isEmpty {
+                    // 异常数据兜底：正常路径下 harvests 至少一茬（编辑弹窗不允许删空）
+                    Text("未设置收菜时间")
+                        .font(.caption).foregroundStyle(.tertiary)
+                } else {
+                    ForEach(r.harvests) { c in
+                        harvestLine(c, showDot: r.harvests.count > 1)
+                    }
                 }
+
                 if let note = r.note, !note.isEmpty {
                     Text(note)
                         .font(.caption2)
@@ -562,17 +610,8 @@ struct RecordRow: View {
                 }
             }
             Spacer(minLength: 4)
-            if r.harvestAt <= Date() {
-                Text("可收获")
-                    .font(.caption.bold())
-                    .foregroundStyle(.green)
-                    .padding(.horizontal, 7).padding(.vertical, 3)
-                    .background(Color.green.opacity(0.15), in: Capsule())
-            } else {
-                Text(remainText(r))
-                    .font(.caption).monospacedDigit()
-                    .foregroundStyle(.secondary)
-            }
+            // 右侧不再放「可收获」徽标：行内每条到期时间已标「可收」，
+            // 再放一个整条汇总会重复且看不出是哪茬到期。
             // 操作按钮：常态半透明，hover 时高亮，避免窄栏拥挤
             Button(action: onEdit) {
                 Image(systemName: "pencil")
@@ -604,144 +643,185 @@ struct RecordRow: View {
     }
 }
 
-/// 编辑单条记录：玻璃面板布局，可改名称、在当前收菜时间上新增分钟，或指定绝对收菜时间
+    /// 单茬收菜时间的一行：勾选态 + 时间 + 该茬的倒计时/状态。
+    /// showDot 只在多茬时为 true：圆点用来区分每一行，单茬时是多余噪音。
+    /// 时间是这行的主角，用 callout + 半粗 + 底色块托住，倒计时用等宽数字紧随其后。
+    private func harvestLine(_ c: HarvestCycle, showDot: Bool = true) -> some View {
+        HStack(spacing: 8) {
+            if showDot {
+                // 圆点本身也要随「是否已收」变色，但不需要秒级刷新，
+                // 交给外层随records 变更重建即可。
+                Image(systemName: c.harvested ? "checkmark.circle.fill" : "circle")
+                    .font(.system(size: 11))
+                    .foregroundStyle(c.harvested ? Color.green : Color.secondary)
+                    .frame(width: 13)   // 固定宽度，保证多行的时间右对齐成一列
+            }
+
+            // 时刻是静态文本，不需要每秒重绘
+            Text(fmt(c.date))
+                .font(.callout.weight(.semibold))
+                .monospacedDigit()
+                .foregroundStyle(c.harvested ? Color.secondary
+                                 : (c.date <= Date() ? Color.orange : Color.accentColor))
+                .padding(.horizontal, 7).padding(.vertical, 2)
+                .background((c.harvested ? Color.green
+                              : (c.date <= Date() ? Color.orange : Color.accentColor))
+                             .opacity(c.harvested ? 0.10 : 0.16),
+                            in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+
+            countdownView(c)
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(accessibilityText(c))
+    }
+
+    /// 倒计时单独包 TimelineView：
+    /// **性能关键** —— 只有这一个 Text 会随时间重建，
+    /// 外层的圆点、时刻底色、整张列表都不重绘。
+    /// 若把 TimelineView 提到列表层，每秒会重算所有行，N 条记录 = N 倍无效工作。
+    private func countdownView(_ c: HarvestCycle) -> some View {
+        // 已收的不需要倒计时，也不该占用每秒刷新，直接返回静态视图
+        if c.harvested {
+            return AnyView(Text("已收")
+                .font(.caption.weight(.medium))
+                .foregroundStyle(.green))
+        }
+
+        // 秒级刷新由系统统一调度（比自建 Timer 省资源，且 App 后台自动暂停）
+        return AnyView(TimelineView(.periodic(from: .now, by: 1)) { context in
+            let overdue = c.date <= context.date
+            if overdue {
+                // 到期未收：最需要被看到的状态，给实心胶囊而不是 00:00
+                Text("可收")
+                    .font(.caption.weight(.bold))
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 6).padding(.vertical, 2)
+                    .background(Color.orange, in: Capsule())
+            } else {
+                Text(remainText(c.date, now: context.date))
+                    .font(.callout.weight(.medium))
+                    .monospacedDigit()
+                    .foregroundStyle(.secondary)
+            }
+        })
+    }
+
+    private func accessibilityText(_ c: HarvestCycle) -> String {
+        let base = fmt(c.date)
+        if c.harvested { return "\(base) 已收" }
+        let left = max(0, Int(c.date.timeIntervalSinceNow))
+        let h = left / 3600, m = (left % 3600) / 60, s = left % 60
+        return h > 0
+            ? "\(base) 还剩 \(h) 小时 \(m) 分"
+            : "\(base) 还剩 \(m) 分 \(s) 秒"
+    }
+
+    /// 编辑单条记录：改名称/备注，并管理各茬收菜时间（反复续期，每茬可单独编辑）
 struct EditRecordSheet: View {
     let record: CropRecord
     let onSave: (CropRecord) -> Void
     @Environment(\.dismiss) private var dismiss
 
-    enum EditMode: String, CaseIterable, Identifiable {
-        case add = "在当前收菜时间上新增"
-        case absolute = "按指定收菜时间"
+    /// 新增一茬时的录入方式。「在上一茬之后」以现有最晚一茬为基准，
+    /// 「每隔两天再续一次」只需填间隔，不用每次心算绝对日期。
+    enum NewMode: String, CaseIterable, Identifiable {
+        case afterLast = "在上一茬之后"
+        case absoluteDate = "按指定收菜时间"
         var id: String { rawValue }
     }
 
-    @State private var mode: EditMode
     @State private var nameText: String
     @State private var noteText: String
-    @State private var hoursText: String
-    @State private var minutesText: String
-    @State private var harvestDate: Date
+    /// 各茬收菜（可在列表里逐行编辑时间、标记已收、删除）
+    @State private var harvests: [HarvestCycle]
+
+    // 新增一茬的表单
+    @State private var newMode: NewMode = .afterLast
+    @State private var newHoursText: String = "0"
+    @State private var newMinutesText: String = "30"
+    @State private var newDate: Date = Date()
 
     init(record: CropRecord, onSave: @escaping (CropRecord) -> Void) {
         self.record = record
         self.onSave = onSave
-        _mode = State(initialValue: .add)
         _nameText = State(initialValue: record.name)
         _noteText = State(initialValue: record.note ?? "")
-        // 默认 0 小时 0 分钟（与主界面「成熟时长」一致的交互）
-        _hoursText = State(initialValue: "0")
-        _minutesText = State(initialValue: "0")
-        _harvestDate = State(initialValue: record.harvestAt)
+        // 按时间排序后作为编辑起点；老数据已在解码阶段迁移成 [HarvestCycle]
+        _harvests = State(initialValue: record.harvests.sorted { $0.date < $1.date })
+        _newDate = State(initialValue: record.harvests.last?.date ?? record.plantedAt)
     }
 
-    /// 新增的总分钟数（小时 × 60 + 分钟），非法输入按 0 处理
-    private var addTotalMinutes: Int {
-        let h = max(0, Int(hoursText.trimmingCharacters(in: .whitespaces)) ?? 0)
-        let m = max(0, Int(minutesText.trimmingCharacters(in: .whitespaces)) ?? 0)
+    private var newTotalMinutes: Int {
+        let h = max(0, Int(newHoursText.trimmingCharacters(in: .whitespaces)) ?? 0)
+        let m = max(0, Int(newMinutesText.trimmingCharacters(in: .whitespaces)) ?? 0)
         return h * 60 + m
     }
 
-    /// 保存校验：允许时长为 0（0 表示保持原收菜时间不变，仅改名称/备注）
-    private var valid: Bool { true }
-
-    private var previewNewHarvest: String? {
-        guard addTotalMinutes > 0 else { return nil }
-        return fmt(record.harvestAt.addingTimeInterval(TimeInterval(addTotalMinutes * 60)))
+    /// 「在上一茬之后」的基准：现有最晚一茬；一茬都没有就用种下时间
+    private var lastHarvestDate: Date {
+        harvests.map(\.date).max() ?? record.plantedAt
     }
+
+    private var previewNewDate: Date {
+        newMode == .afterLast
+            ? lastHarvestDate.addingTimeInterval(TimeInterval(newTotalMinutes * 60))
+            : newDate
+    }
+
+    /// 至少要留一茬，否则这条记录没有意义
+    private var valid: Bool { !harvests.isEmpty }
 
     var body: some View {
         NavigationStack {
-            VStack(alignment: .leading, spacing: 20) {
-                // 头部：蔬菜标识 + 当前收菜时间
-                HStack(spacing: 12) {
-                    Circle()
-                        .fill(LinearGradient(colors: [Color(hex: record.colorHex),
-                                                      Color(hex: record.colorHex).opacity(0.7)],
-                                             startPoint: .top, endPoint: .bottom))
-                        .frame(width: 38, height: 38)
-                        .overlay(Text(String(record.name.prefix(1)))
-                            .foregroundColor(.white).font(.headline))
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(record.name).font(.headline)
-                        Text("当前收菜时间  \(fmt(record.harvestAt))")
-                            .font(.caption).foregroundStyle(.secondary)
+            ScrollView {
+                VStack(alignment: .leading, spacing: 20) {
+                    // 头部：蔬菜标识 + 续期概况
+                    HStack(spacing: 12) {
+                        Circle()
+                            .fill(LinearGradient(colors: [Color(hex: record.colorHex),
+                                                          Color(hex: record.colorHex).opacity(0.7)],
+                                                 startPoint: .top, endPoint: .bottom))
+                            .frame(width: 38, height: 38)
+                            .overlay(Text(String(record.name.prefix(1)))
+                                .foregroundColor(.white).font(.headline))
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(record.name).font(.headline)
+                            Text(harvestSummary)
+                                .font(.caption).foregroundStyle(.secondary)
+                        }
                     }
-                }
-                .padding(.leading, 4)
+                    .padding(.leading, 4)
 
-                GlassPanel {
-                    VStack(alignment: .leading, spacing: 18) {
-                        LabeledField("蔬菜名称") {
-                            TextField("例如 胡萝卜", text: $nameText)
-                                .textFieldStyle(.roundedBorder)
-                                .frame(width: 220)
-                        }
-
-                        LabeledField("备注说明") {
-                            // TextEditor 才支持真正多行输入（TextField axis:.vertical 在 macOS 上不会换行）
-                            TextEditor(text: $noteText)
-                                .font(.body)
-                                .scrollContentBackground(.hidden)
-                                .padding(6)
-                                .frame(width: 300, height: 64)
-                                .background(Color.primary.opacity(0.06),
-                                            in: RoundedRectangle(cornerRadius: 6))
-                                .overlay(RoundedRectangle(cornerRadius: 6)
-                                    .strokeBorder(Color.primary.opacity(0.12), lineWidth: 1))
-                        }
-
-                        VStack(alignment: .leading, spacing: 8) {
-                            Text("时间方式")
-                                .font(.subheadline).foregroundStyle(.secondary)
-                            Picker("时间方式", selection: $mode) {
-                                ForEach(EditMode.allCases) { Text($0.rawValue).tag($0) }
+                    GlassPanel {
+                        VStack(alignment: .leading, spacing: 18) {
+                            LabeledField("蔬菜名称") {
+                                TextField("例如 胡萝卜", text: $nameText)
+                                    .textFieldStyle(.roundedBorder)
+                                    .frame(width: 220)
                             }
-                            .pickerStyle(.segmented)
-                            .labelsHidden()
-                        }
 
-                        if mode == .add {
-                            LabeledField("新增时长") {
-                                HStack(spacing: 8) {
-                                    TextField("0", text: $hoursText)
-                                        .textFieldStyle(.roundedBorder)
-                                        .frame(width: 70)
-                                        .multilineTextAlignment(.trailing)
-                                    Text("小时").font(.subheadline).foregroundStyle(.secondary)
-                                    TextField("0", text: $minutesText)
-                                        .textFieldStyle(.roundedBorder)
-                                        .frame(width: 70)
-                                        .multilineTextAlignment(.trailing)
-                                    Text("分钟").font(.subheadline).foregroundStyle(.secondary)
-                                    if addTotalMinutes > 0 {
-                                        Text("共 \(formatDurationText(addTotalMinutes))")
-                                            .font(.caption).foregroundStyle(.secondary)
-                                    } else {
-                                        Text("0 表示不改动收菜时间")
-                                            .font(.caption).foregroundStyle(.tertiary)
-                                    }
-                                }
-                            }
-                            if let p = previewNewHarvest {
-                                Label("收菜时间将变更为 \(p)", systemImage: "arrow.forward")
-                                    .font(.caption).foregroundStyle(.tint)
-                                    .padding(.leading, 122)
-                            }
-                        } else {
-                            LabeledField("收菜时间") {
-                                DatePicker("", selection: $harvestDate,
-                                          displayedComponents: [.date, .hourAndMinute])
-                                    .labelsHidden()
+                            LabeledField("备注说明") {
+                                // TextEditor 才支持真正多行输入（TextField axis:.vertical 在 macOS 上不会换行）
+                                TextEditor(text: $noteText)
+                                    .font(.body)
+                                    .scrollContentBackground(.hidden)
+                                    .padding(6)
+                                    .frame(width: 320, height: 64)
+                                    .background(Color.primary.opacity(0.06),
+                                                in: RoundedRectangle(cornerRadius: 6))
+                                    .overlay(RoundedRectangle(cornerRadius: 6)
+                                        .strokeBorder(Color.primary.opacity(0.12), lineWidth: 1))
                             }
                         }
                     }
-                }
 
-                Spacer(minLength: 0)
+                    cyclesSection
+                }
+                .padding(24)
             }
-            .padding(24)
-            .frame(minWidth: 500, minHeight: 420, alignment: .topLeading)
+            // 高度下限给足：名称/备注 + 若干行收菜时间 + 续期表单全部要能一次看全，
+            // 之前 560 偏低，最后一行会被截断（ScrollView 能滚但用户容易漏看）
+            .frame(minWidth: 620, minHeight: 640, alignment: .topLeading)
             .navigationTitle("编辑记录")
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
@@ -754,26 +834,282 @@ struct EditRecordSheet: View {
         }
     }
 
-    private func save() {
-        let harvestAt: Date
-        switch mode {
-        case .add:
-            // 新增时长为 0 表示「保持原收菜时间不变」，只改名称/备注
-            harvestAt = addTotalMinutes > 0
-                ? record.harvestAt.addingTimeInterval(TimeInterval(addTotalMinutes * 60))
-                : record.harvestAt
-        case .absolute:
-            harvestAt = harvestDate
+    /// 「共 N 茬 · 已收 M · 下次 …」
+    private var harvestSummary: String {
+        let n = Date()
+        let done = harvests.filter { $0.harvested }.count
+        let upcoming = harvests.filter { !$0.harvested && $0.date > n }
+            .map(\.date).min()
+        var s = "共 \(harvests.count) 茬 · 已收 \(done)"
+        if let u = upcoming { s += " · 下次 \(fmt(u))" }
+        else if done < harvests.count { s += " · 有 \(harvests.count - done) 茬待收" }
+        return s
+    }
+
+    // MARK: - 各茬收菜时间
+
+    private var cyclesSection: some View {
+        GlassPanel {
+            VStack(alignment: .leading, spacing: 12) {
+                Label("收菜时间（每茬可单独编辑）", systemImage: "calendar")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+
+                VStack(spacing: 8) {
+                    ForEach($harvests) { $h in
+                        cycleRow($h)
+                    }
+                }
+
+                Divider()
+
+                // 新增一茬
+                VStack(alignment: .leading, spacing: 10) {
+                    Text("再续一茬")
+                        .font(.caption).foregroundStyle(.secondary)
+                    Picker("", selection: $newMode) {
+                        ForEach(NewMode.allCases) { Text($0.rawValue).tag($0) }
+                    }
+                    .labelsHidden()
+                    .pickerStyle(.segmented)
+                    .frame(maxWidth: 320)
+
+                    HStack(spacing: 8) {
+                        if newMode == .afterLast {
+                            TextField("0", text: $newHoursText)
+                                .textFieldStyle(.roundedBorder)
+                                .frame(width: 66)
+                                .multilineTextAlignment(.trailing)
+                            Text("小时").font(.subheadline).foregroundStyle(.secondary)
+                            TextField("30", text: $newMinutesText)
+                                .textFieldStyle(.roundedBorder)
+                                .frame(width: 66)
+                                .multilineTextAlignment(.trailing)
+                            Text("分钟").font(.subheadline).foregroundStyle(.secondary)
+                            Text("→ \(fmt(previewNewDate))")
+                                .font(.caption).foregroundStyle(.tint).monospacedDigit()
+                        } else {
+                            DatePicker("", selection: $newDate,
+                                      displayedComponents: [.date, .hourAndMinute])
+                                .labelsHidden()
+                        }
+                        Spacer(minLength: 0)
+                        Button {
+                            addCycle()
+                        } label: {
+                            Label("添加", systemImage: "plus")
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                    }
+                }
+            }
         }
+    }
+
+    private func cycleRow(_ h: Binding<HarvestCycle>) -> some View {
+        let overdue = !h.wrappedValue.harvested && h.wrappedValue.date <= Date()
+        return HStack(spacing: 10) {
+            // 已收勾选：续期时收了这一茬再续下一茬
+            Button {
+                h.wrappedValue.harvested.toggle()
+            } label: {
+                Image(systemName: h.wrappedValue.harvested
+                      ? "checkmark.circle.fill" : "circle")
+                    .foregroundStyle(h.wrappedValue.harvested ? Color.green
+                                     : (overdue ? Color.orange : Color.secondary))
+            }
+            .buttonStyle(.borderless)
+            .help(h.wrappedValue.harvested ? "取消「已收」标记" : "标记这一茬已收")
+
+            // 每茬独立的时间选择器（可直接改日期和时分）
+            DatePicker("",
+                      selection: h.date,
+                      displayedComponents: [.date, .hourAndMinute])
+                .labelsHidden()
+                .fixedSize()
+
+            // 每行的倒计时同样要实时刷新。编辑弹窗里行数很少（通常1~5 茬），
+            // 开销可忽略，直接用 TimelineView 包这一个 Text。
+            if h.wrappedValue.harvested {
+                Text("已收")
+                    .font(.caption.weight(.medium))
+                    .foregroundStyle(.green)
+            } else {
+                TimelineView(.periodic(from: .now, by: 1)) { ctx in
+                    let over = h.wrappedValue.date <= ctx.date
+                    if over {
+                        Text("可收")
+                            .font(.caption.weight(.bold))
+                            .foregroundStyle(.white)
+                            .padding(.horizontal, 5).padding(.vertical, 1)
+                            .background(Color.orange, in: Capsule())
+                    } else {
+                        Text(remainText(h.wrappedValue.date, now: ctx.date))
+                            .font(.caption.monospacedDigit())
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            }
+
+            Spacer(minLength: 0)
+
+            // 调整时间：弹出输入面板填「增加多少小时/分钟」，默认 1 小时 0 分
+            Button {
+                openAdjust(for: h.wrappedValue.id)
+            } label: {
+                Label("调整", systemImage: "clock.arrow.circlepath")
+                    .labelStyle(.titleAndIcon)
+                    .font(.caption)
+                    .padding(.horizontal, 6).padding(.vertical, 2)
+                    .background(Color.primary.opacity(0.07),
+                                in: RoundedRectangle(cornerRadius: 5))
+            }
+            .buttonStyle(.plain)
+            .popover(isPresented: Binding(
+                get: { adjustingID == h.wrappedValue.id },
+                set: { if !$0 { closeAdjust() } }
+            ), arrowEdge: .bottom) {
+                adjustPanel(for: h.wrappedValue.id)
+            }
+            .help("调整这一茬的时间")
+
+            Button {
+                harvests.removeAll { $0.id == h.wrappedValue.id }
+            } label: {
+                Image(systemName: "trash")
+                    .font(.system(size: 11))
+                    .frame(width: 20, height: 20)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.borderless)
+            .tint(.red)
+            .help("删除这一茬")
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
+        .background(Color.primary.opacity(0.04),
+                    in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+    }
+
+    // MARK: - 调整单茬时间
+
+    /// 正在调整的茬 id（nil = 面板关闭）。用 id 而非下标定位，
+    /// 否则删行/排序后下标会错位，改到别的茬上。
+    @State private var adjustingID: String?
+    @State private var adjustHoursText: String = "1"
+    @State private var adjustMinutesText: String = "0"
+    /// 负数表示往前拨，正数往后
+    @State private var adjustDirection: AdjustDirection = .later
+
+    enum AdjustDirection: String, CaseIterable, Identifiable {
+        case later = "往后延"
+        case earlier = "往前提"
+        var id: String { rawValue }
+    }
+
+    private func openAdjust(for id: String) {
+        // 每次打开都重置为默认 1 小时 0 分，符合「改一次就是加一小时」的直觉
+        adjustingID = id
+        adjustHoursText = "1"
+        adjustMinutesText = "0"
+        adjustDirection = .later
+    }
+
+    private func closeAdjust() {
+        adjustingID = nil
+    }
+
+    /// 面板里的调整量（分钟），非法输入按 0 处理
+    private var adjustTotalMinutes: Int {
+        let h = max(0, Int(adjustHoursText.trimmingCharacters(in: .whitespaces)) ?? 0)
+        let m = max(0, Int(adjustMinutesText.trimmingCharacters(in: .whitespaces)) ?? 0)
+        let total = h * 60 + m
+        return adjustDirection == .later ? total : -total
+    }
+
+    @ViewBuilder
+    private func adjustPanel(for id: String) -> some View {
+        let cur = harvests.first { $0.id == id }
+        VStack(alignment: .leading, spacing: 12) {
+            Text("调整收菜时间")
+                .font(.headline)
+            if let c = cur {
+                Text("当前 \(fmt(c.date))")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+
+            Picker("", selection: $adjustDirection) {
+                ForEach(AdjustDirection.allCases) { Text($0.rawValue).tag($0) }
+            }
+            .labelsHidden()
+            .pickerStyle(.segmented)
+
+            HStack(spacing: 8) {
+                TextField("1", text: $adjustHoursText)
+                    .textFieldStyle(.roundedBorder)
+                    .frame(width: 60)
+                    .multilineTextAlignment(.trailing)
+                Text("小时").font(.subheadline).foregroundStyle(.secondary)
+                TextField("0", text: $adjustMinutesText)
+                    .textFieldStyle(.roundedBorder)
+                    .frame(width: 60)
+                    .multilineTextAlignment(.trailing)
+                Text("分钟").font(.subheadline).foregroundStyle(.secondary)
+                Spacer(minLength: 0)
+            }
+
+            if adjustTotalMinutes != 0, let c = cur {
+                let newDate = c.date.addingTimeInterval(TimeInterval(adjustTotalMinutes * 60))
+                Text("→ \(fmt(newDate))")
+                    .font(.caption).foregroundStyle(.tint).monospacedDigit()
+            }
+
+            HStack {
+                Button("取消") { closeAdjust() }
+                Spacer()
+                Button("确定") {
+                    applyAdjust(for: id)
+                    closeAdjust()
+                }
+                .keyboardShortcut(.defaultAction)
+                .disabled(adjustTotalMinutes == 0)
+            }
+        }
+        .padding(16)
+        .frame(width: 280)
+    }
+
+    private func applyAdjust(for id: String) {
+        guard let i = harvests.firstIndex(where: { $0.id == id }) else { return }
+        harvests[i].date = harvests[i].date
+            .addingTimeInterval(TimeInterval(adjustTotalMinutes * 60))
+        // 调整后时间顺序可能变了，保持列表始终按时间先后展示
+        harvests.sort { $0.date < $1.date }
+    }
+
+    private func addCycle() {
+        let d = previewNewDate
+        harvests.append(HarvestCycle(date: d))
+        // 用户可能往回加时间，列表始终按时间先后展示
+        harvests.sort { $0.date < $1.date }
+        // 下一轮「在上一茬之后」以刚加的为准，连续续期不用重算
+        newDate = d
+    }
+
+    private func save() {
         let trimmedNote = noteText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let sorted = harvests.sorted { $0.date < $1.date }
+        let first = sorted.first?.date ?? record.plantedAt
         let updated = CropRecord(
             id: record.id,
             name: nameText.trimmingCharacters(in: .whitespaces).isEmpty
                 ? record.name : nameText.trimmingCharacters(in: .whitespaces),
             colorHex: record.colorHex,
-            minutes: max(0, Int(harvestAt.timeIntervalSince(record.plantedAt) / 60)),
+            // minutes 保持「首茬相对种下时间的成熟时长」，续期不影响这个基线
+            minutes: max(0, Int(first.timeIntervalSince(record.plantedAt) / 60)),
             plantedAt: record.plantedAt,
-            harvestAt: harvestAt,
+            harvests: sorted,
             note: trimmedNote.isEmpty ? nil : trimmedNote
         )
         onSave(updated)
