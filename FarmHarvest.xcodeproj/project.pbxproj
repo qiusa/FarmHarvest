@@ -14,6 +14,7 @@
 		AB0000000000000000000201 /* FarmHarvestWidget.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000201 /* FarmHarvestWidget.swift */; };
 		AB0000000000000000000202 /* CropStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000103 /* CropStore.swift */; };
 		AB0000000000000000000W10 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000W10 /* Assets.xcassets */; };
+		AB0000000000000000000W11 /* WidgetIcon.icns in Resources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000W11 /* WidgetIcon.icns */; };
 		AB0000000000000000000E01 /* FarmHarvestWidget.appex in Embed App Extensions */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000A02 /* FarmHarvestWidget.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		AB0000000000000000000R01 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000R01 /* Assets.xcassets */; };
 /* End PBXBuildFile section */
@@ -29,6 +30,7 @@
 		AA0000000000000000000104 /* FarmHarvest.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = FarmHarvest.entitlements; sourceTree = "<group>"; };
 		AA0000000000000000000M01 /* CropManagerSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CropManagerSheet.swift; sourceTree = "<group>"; };
 		AA0000000000000000000W10 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		AA0000000000000000000W11 /* WidgetIcon.icns */ = {isa = PBXFileReference; lastKnownFileType = image.icns; path = WidgetIcon.icns; sourceTree = "<group>"; };
 		AA0000000000000000000201 /* FarmHarvestWidget.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FarmHarvestWidget.swift; sourceTree = "<group>"; };
 		AA0000000000000000000203 /* FarmHarvestWidget.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = FarmHarvestWidget.entitlements; sourceTree = "<group>"; };
 		AA0000000000000000000R01 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
@@ -43,13 +45,13 @@
 
 /* Begin PBXResourcesBuildPhase section */
 		B0000000000000000000R02 /* Resources */ = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (AB0000000000000000000R01 /* Assets.xcassets in Resources */,); runOnlyForDeploymentPostprocessing = 0; };
-		B0000000000000000000W03 /* Resources */ = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (AB0000000000000000000W10 /* Assets.xcassets in Resources */,); runOnlyForDeploymentPostprocessing = 0; };
+		B0000000000000000000W03 /* Resources */ = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (AB0000000000000000000W10 /* Assets.xcassets in Resources */, AB0000000000000000000W11 /* WidgetIcon.icns in Resources */,); runOnlyForDeploymentPostprocessing = 0; };
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXGroup section */
 		AE0000000000000000000001 = {isa = PBXGroup; children = (AE0000000000000000000002, AE0000000000000000000003, AE0000000000000000000004); sourceTree = "<group>"; };
 		AE0000000000000000000002 /* FarmHarvest */ = {isa = PBXGroup; children = (AA0000000000000000000101, AA0000000000000000000102, AA0000000000000000000103, AA0000000000000000000104, AA0000000000000000000M01, AA0000000000000000000R01); path = FarmHarvest; sourceTree = "<group>"; };
-		AE0000000000000000000003 /* FarmHarvestWidget */ = {isa = PBXGroup; children = (AA0000000000000000000201, AA0000000000000000000203, AA0000000000000000000W10, AA0000000000000000000103); path = FarmHarvestWidget; sourceTree = "<group>"; };
+		AE0000000000000000000003 /* FarmHarvestWidget */ = {isa = PBXGroup; children = (AA0000000000000000000201, AA0000000000000000000203, AA0000000000000000000W10, AA0000000000000000000W11, AA0000000000000000000103); path = FarmHarvestWidget; sourceTree = "<group>"; };
 		AE0000000000000000000004 /* Products */ = {isa = PBXGroup; children = (AA0000000000000000000A01, AA0000000000000000000A02); name = Products; sourceTree = "<group>"; };
 /* End PBXGroup section */
 
