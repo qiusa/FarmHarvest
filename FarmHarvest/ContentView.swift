@@ -864,9 +864,8 @@ struct RecordRow: View {
                 }
 
                 if let note = r.note, !note.isEmpty {
-                    Text(note)
+                    highlightedNote(note)
                         .font(.caption2)
-                        .foregroundStyle(.secondary)
                         .lineLimit(2)
                 }
             }
@@ -1004,6 +1003,35 @@ struct RecordRow: View {
         return h > 0
             ? "\(base) 还剩 \(h) 小时 \(m) 分"
             : "\(base) 还剩 \(m) 分 \(s) 秒"
+    }
+
+    /// 把备注按「、」拆词渲染：命中分组的词用组色 + 色点高亮（与预选栏一致），
+    /// 其余保持灰色；整体仍是单段可换行的 Text（保留记录行 lineLimit）。
+    private func highlightedNote(_ note: String) -> Text {
+        var result = AttributedString()
+        let tokens = note.components(separatedBy: "、")
+        for i in tokens.indices {
+            let t = tokens[i].trimmingCharacters(in: .whitespacesAndNewlines)
+            if let g = NotePresetBar.groupOf(t) {
+                var dot = AttributedString("●")
+                dot.foregroundColor = g.color
+                var word = AttributedString(t)
+                word.foregroundColor = g.color
+                result += dot
+                result += AttributedString(" ")
+                result += word
+            } else {
+                var word = AttributedString(t)
+                word.foregroundColor = .secondary
+                result += word
+            }
+            if i < tokens.count - 1 {
+                var sep = AttributedString("、")
+                sep.foregroundColor = .secondary
+                result += sep
+            }
+        }
+        return Text(result)
     }
 }
 
@@ -1630,6 +1658,14 @@ struct NotePresetBar: View {
             arr.append(preset)
         }
         noteText = arr.joined(separator: "、")
+    }
+
+    /// 给定预选文本，返回其所属分组（用于收菜记录行高亮区分）
+    static func groupOf(_ text: String) -> Group? {
+        for p in seedPresets + seedlingPresets where p.id == text {
+            return p.group
+        }
+        return nil
     }
 }
 
