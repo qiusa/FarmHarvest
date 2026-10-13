@@ -1491,22 +1491,54 @@ struct EditRecordSheet: View {
 /// 备注说明的预选标签栏：点标签可多选填入，再次点击取消，自动去重。
 /// 两类预选值各占一行：第一行「种子」、第二行「树苗」。
 /// 内部以「、」作为选中项的分隔符，noteText 同时仍是自由文本（可手写）。
+/// 部分标签属于同一类（如豆类、名贵树苗），用色点 + 同色描边高亮区分。
 struct NotePresetBar: View {
     @Binding var noteText: String
 
-    /// 种子预选值（第一行）
-    private static let seedPresets = [
-        "甘薯种子", "番茄种子", "白菜种子", "酸模种子", "大豆种子", "南瓜种子",
-        "茄子种子", "千穗谷种子", "小麦种子", "绿豆种子", "西瓜种子", "辣椒种子",
-        "雪绯花种子", "大麦种子", "红豆种子", "豆薯种子", "枸杞种子", "甘蓝种子",
-        "山菊种子", "蚕豆种子", "冬瓜种子", "土豆种子", "青桑种子", "燕麦种子", "豌豆种子"
+    /// 标签分组：用于高亮区分同一类预选值
+    enum Group: String, CaseIterable, Identifiable {
+        case bean = "豆"          // 大豆/绿豆/红豆/蚕豆 种子
+        case sandalwood = "名贵"  // 麻梨/老山檀/奇楠沉香 树苗
+        var id: String { rawValue }
+        /// 该组的主题色：豆=琥珀，名贵=紫
+        var color: Color {
+            switch self {
+            case .bean:       return Color(red: 0.93, green: 0.60, blue: 0.18)
+            case .sandalwood: return Color(red: 0.58, green: 0.36, blue: 0.82)
+            }
+        }
+    }
+
+    /// 单个预选值（文本 + 可选分组）
+    struct Preset: Identifiable {
+        let id: String
+        let group: Group?
+        init(_ id: String, group: Group? = nil) {
+            self.id = id
+            self.group = group
+        }
+    }
+
+    /// 种子预选值（第一行），豆组高亮
+    private static let seedPresets: [Preset] = [
+        Preset("甘薯种子"), Preset("番茄种子"), Preset("白菜种子"), Preset("酸模种子"),
+        Preset("大豆种子", group: .bean), Preset("南瓜种子"), Preset("茄子种子"),
+        Preset("千穗谷种子"), Preset("小麦种子"),
+        Preset("绿豆种子", group: .bean), Preset("西瓜种子"), Preset("辣椒种子"),
+        Preset("雪绯花种子"), Preset("大麦种子"),
+        Preset("红豆种子", group: .bean), Preset("豆薯种子"), Preset("枸杞种子"),
+        Preset("甘蓝种子"), Preset("山菊种子"),
+        Preset("蚕豆种子", group: .bean), Preset("冬瓜种子"), Preset("土豆种子"),
+        Preset("青桑种子"), Preset("燕麦种子"), Preset("豌豆种子")
     ]
 
-    /// 树苗预选值（第二行）
-    private static let seedlingPresets = [
-        "乌木树苗", "金丝楠树苗", "黄花梨树苗", "小叶紫檀树苗", "奇楠沉香树苗",
-        "枣树苗", "桃树苗", "黄杨树苗", "桑树苗", "麻梨树苗", "鸡翅树苗",
-        "黄檀树苗", "大红酸枝苗", "老山檀树苗", "崖柏树苗"
+    /// 树苗预选值（第二行），名贵组高亮
+    private static let seedlingPresets: [Preset] = [
+        Preset("乌木树苗"), Preset("金丝楠树苗"), Preset("黄花梨树苗"),
+        Preset("小叶紫檀树苗"), Preset("奇楠沉香树苗", group: .sandalwood),
+        Preset("枣树苗"), Preset("桃树苗"), Preset("黄杨树苗"), Preset("桑树苗"),
+        Preset("麻梨树苗", group: .sandalwood), Preset("鸡翅树苗"), Preset("黄檀树苗"),
+        Preset("大红酸枝苗"), Preset("老山檀树苗", group: .sandalwood), Preset("崖柏树苗")
     ]
 
     /// 当前已选中的 token 集合（按「、」切分）
@@ -1520,13 +1552,21 @@ struct NotePresetBar: View {
         VStack(alignment: .leading, spacing: 8) {
             presetRow(Self.seedPresets, label: "种子")
             presetRow(Self.seedlingPresets, label: "树苗")
+            HStack(spacing: 14) {
+                ForEach(Group.allCases) { g in
+                    HStack(spacing: 4) {
+                        Circle().fill(g.color).frame(width: 7, height: 7)
+                        Text(g.rawValue).font(.caption2).foregroundStyle(.secondary)
+                    }
+                }
+            }
             Text("点击标签多选填入，再次点击取消（自动去重）")
                 .font(.caption2)
                 .foregroundStyle(.tertiary)
         }
     }
 
-    private func presetRow(_ presets: [String], label: String) -> some View {
+    private func presetRow(_ presets: [Preset], label: String) -> some View {
         HStack(alignment: .top, spacing: 8) {
             Text(label)
                 .font(.caption2)
@@ -1534,31 +1574,49 @@ struct NotePresetBar: View {
                 .frame(width: 28, alignment: .leading)
                 .padding(.top, 5)
             FlowLayout(spacing: 6) {
-                ForEach(presets, id: \.self) { p in
+                ForEach(presets) { p in
                     chip(p)
                 }
             }
         }
     }
 
-    private func chip(_ preset: String) -> some View {
-        let on = selectedTokens.contains(preset)
+    private func chip(_ p: Preset) -> some View {
+        let on = selectedTokens.contains(p.id)
+        let gc = p.group?.color
         return Button {
-            withAnimation(.smooth(duration: 0.15)) { toggle(preset) }
+            withAnimation(.smooth(duration: 0.15)) { toggle(p.id) }
         } label: {
-            Text(preset)
-                .font(.caption2)
-                .padding(.horizontal, 8).padding(.vertical, 4)
-                .background(on ? Color.accentColor.opacity(0.18)
-                            : Color.primary.opacity(0.06),
-                            in: RoundedRectangle(cornerRadius: 7, style: .continuous))
-                .overlay(RoundedRectangle(cornerRadius: 7, style: .continuous)
-                    .strokeBorder(on ? Color.accentColor : Color.primary.opacity(0.12),
-                                  lineWidth: 1))
-                .foregroundStyle(on ? Color.accentColor : .primary)
+            HStack(spacing: 4) {
+                if let gc {
+                    Circle().fill(gc).frame(width: 6, height: 6)
+                }
+                Text(p.id).font(.caption2)
+            }
+            .padding(.horizontal, 8).padding(.vertical, 4)
+            .background(bg(on: on, gc: gc),
+                        in: RoundedRectangle(cornerRadius: 7, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 7, style: .continuous)
+                .strokeBorder(border(on: on, gc: gc), lineWidth: 1))
+            .foregroundStyle(fg(on: on, gc: gc))
         }
         .buttonStyle(.plain)
         .accessibilityAddTraits(on ? .isSelected : [])
+    }
+
+    // MARK: - 配色
+
+    private func bg(on: Bool, gc: Color?) -> Color {
+        if let gc { return gc.opacity(on ? 0.22 : 0.10) }
+        return on ? Color.accentColor.opacity(0.18) : Color.primary.opacity(0.06)
+    }
+    private func border(on: Bool, gc: Color?) -> Color {
+        if let gc { return gc.opacity(on ? 1 : 0.5) }
+        return on ? Color.accentColor : Color.primary.opacity(0.12)
+    }
+    private func fg(on: Bool, gc: Color?) -> Color {
+        if let gc { return on ? gc : .primary }
+        return on ? Color.accentColor : .primary
     }
 
     /// 切换某个预选值：未选则追加，已选则移除，结果以「、」拼接（天然去重）
