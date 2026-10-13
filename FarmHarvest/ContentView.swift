@@ -1,6 +1,7 @@
 import SwiftUI
 import AppKit
 import UserNotifications
+import os.log
 
 /// 录入/编辑的时间模式
 enum InputMode: String, CaseIterable, Identifiable {
@@ -45,39 +46,141 @@ func remainText(_ target: Date, now: Date = Date()) -> String {
 }
 
 /// 本地通知：到期前 1 分钟提醒（主 App 负责调度，Widget 不可发通知）
-enum CropNotifier {
-    /// App 启动时申请一次通知授权
-    static func requestPermission() {
-        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge]) { _, _ in }
+/// 本地通知调度。必须是 class：UNUserNotificationCenterDelegate 继承自 NSObjectProtocol，
+/// enum / struct 无法遵循（报 "non-class type cannot conform to class protocol"）。
+final class CropNotifier: NSObject, UNUserNotificationCenterDelegate {
+    static let shared = CropNotifier()
+
+    /// App 启动时申请一次通知授权，并把自己注册为代理。
+    /// 代理是必须的：不设 willPresent 的话，App 在前台时通知**不弹横幅**，
+    /// 看起来就像「没发通知」——其实系统已经收到了。
+    static func bootstrap() {
+        let center = UNUserNotificationCenter.current()
+        center.delegate = shared
+        center.requestAuthorization(options: [.alert, .sound, .badge]) { granted, err in
+            if let err {
+                os_log("通知授权失败 %{public}@", log: .default, type: .error, "\(err)")
+            }
+            os_log("通知授权结果 %{public}@", log: .default, type: .info, "\(granted)")
+            // 授权是异步的，必须等结果回来再排程；
+            // 否则授权尚未完成时的 add() 会被丢弃。
+            DispatchQueue.main.async { reschedule(CropStore.load()) }
+        }
     }
 
-    /// 依据当前记录重排"提前 1 分钟"的本地通知（每次记录变更都整表重排）
-    /// 一条记录可能有多个收菜时间点，每个都要单独排一条通知，
-    /// 且 identifier 必须带时间戳区分 —— 否则同一 id 的多次通知会互相覆盖，
-    /// 结果只有第一茬能收到提醒。
+    /// App 在前台也展示横幅 + 播放声音，否则前台时通知等于没发
+    func userNotificationCenter(
+        _ center: UNUserNotificationCenter,
+        willPresent notification: UNNotification,
+        withCompletionHandler completionHandler:
+        @escaping (UNNotificationPresentationOptions) -> Void
+    ) {
+        completionHandler([.banner, .sound, .list])
+    }
+
+    /// 依据当前记录重排本地通知（每次记录变更都整表重排）。
+    /// 每茬排两条：到点提醒 + 提前 1 分钟预告。
+    /// identifier 必须带时间戳+类型区分 —— 否则同一 id 的多条请求会互相覆盖，
+    /// 结果只有一条能发出来。
     static func reschedule(_ records: [CropRecord]) {
         let center = UNUserNotificationCenter.current()
         center.removeAllPendingNotificationRequests()
         let now = Date()
         for r in records {
-            for (idx, hAt) in r.allHarvests.enumerated() {
-                let fire = hAt.addingTimeInterval(-60) // 提前 1 分钟
-                guard fire > now else { continue }
-                let content = UNMutableNotificationContent()
-                let total = r.allHarvests.count
-                content.title = total > 1
-                    ? "\(r.name) 即将可收菜（第 \(idx + 1)/\(total) 次）"
-                    : "\(r.name) 即将可收菜"
-                content.body = "还有 1 分钟 · 收菜时间 \(fmt(hAt))"
-                content.sound = .default
-                content.badge = 1
-                let secs = fire.timeIntervalSince(now)
-                let trigger = UNTimeIntervalNotificationTrigger(timeInterval: secs, repeats: false)
-                // identifier 里带时间戳，保证多茬的请求不会互相替换
-                let req = UNNotificationRequest(
-                    identifier: "harvest-\(r.id)-\(Int(hAt.timeIntervalSince1970))",
-                    content: content, trigger: trigger)
-                center.add(req)
+            // 跳过已采收的茬：已经收完了还响通知就是噪音
+            let pending = r.harvests.filter { !$0.harvested }.sorted { $0.date < $1.date }
+            // 序位按「全部茬」算，而不是过滤后的，否则第一茬收了之后
+            // 剩余各茬的「第 N 茬」编号会错位
+            let allSorted = r.harvests.sorted { $0.date < $1.date }
+            let total = allSorted.count
+            for h in pending {
+                let at = h.date
+                let stamp = Int(at.timeIntervalSince1970)
+                let pos = (allSorted.firstIndex { $0.id == h.id } ?? 0) + 1
+                let nth = total > 1 ? "（第 \(pos)/\(total) 茬）" : ""
+
+                // ① 到点提醒：这是用户最需要的那一条
+                if at > now {
+                    add(center,
+                        id: "at-\(r.id)-\(stamp)",
+                        title: "\(r.name) 可以收菜了\(nth)",
+                        body: "收菜时间 \(fmt(at))，快去看看",
+                        fire: at,
+                        badge: 1)
+                }
+
+                // ② 提前 1 分钟预告，留出反应时间
+                let pre = at.addingTimeInterval(-60)
+                if pre > now {
+                    add(center,
+                        id: "pre-\(r.id)-\(stamp)",
+                        title: "\(r.name) 即将可收菜\(nth)",
+                        body: "还有 1 分钟 · 收菜时间 \(fmt(at))",
+                        fire: pre,
+                        badge: nil)
+                }
+            }
+        }
+    }
+
+    private static func add(_ center: UNUserNotificationCenter,
+                            id: String, title: String, body: String,
+                            fire: Date, badge: Int?) {
+        let content = UNMutableNotificationContent()
+        content.title = title
+        content.body = body
+        content.sound = .default
+        if let badge { content.badge = NSNumber(value: badge) }
+        let secs = fire.timeIntervalSinceNow
+        // UNTimeIntervalNotificationTrigger 要求 interval > 0，
+        // 传0 或负数会直接抛异常，所以这里必须再兜一层。
+        guard secs > 0.5 else { return }
+        let trigger = UNTimeIntervalNotificationTrigger(
+            timeInterval: secs, repeats: false)
+        center.add(UNNotificationRequest(identifier: id,
+                                         content: content, trigger: trigger))
+        { err in
+            if let err {
+                os_log("通知排程失败 %{public}@ id=%{public}@",
+                       log: .default, type: .error, "\(err)", id)
+            }
+        }
+    }
+
+    /// 通知自检：授权状态 + 已排程条数，用于定位「点了没反应」。
+    /// 系统 API 都是异步的，所以用回调返回结果，不能同步拿。
+    static func diagnose(_ completion: @escaping ([String]) -> Void) {
+        let center = UNUserNotificationCenter.current()
+        var out: [String] = []
+        center.getNotificationSettings { s in
+            let status: String
+            switch s.authorizationStatus {
+            case .authorized: status = "已授权"
+            case .denied: status = "**已拒绝**（需去系统设置里手动打开）"
+            case .notDetermined: status = "未询问"
+            case .provisional: status = "临时授权"
+            default: status = "未知"
+            }
+            out.append("通知权限：\(status)")
+            out.append("横幅提醒：\(s.alertSetting == .enabled ? "开" : "关")")
+            out.append("声音：\(s.soundSetting == .enabled ? "开" : "关")")
+
+            center.getPendingNotificationRequests { reqs in
+                out.append("已排程通知：\(reqs.count) 条")
+                // 到点通知（at-）与预告（pre-）分别计数，便于定位是哪一类没排上
+                let at = reqs.filter { $0.identifier.hasPrefix("at-") }.count
+                let pre = reqs.filter { $0.identifier.hasPrefix("pre-") }.count
+                out.append("其中到点 \(at) 条 · 预告 \(pre) 条")
+                let fmtS = DateFormatter()
+                fmtS.dateFormat = "MM-dd HH:mm"
+                let soon = reqs.compactMap { r -> String? in
+                    guard let t = r.trigger as? UNTimeIntervalNotificationTrigger else { return nil }
+                    return fmtS.string(from: Date().addingTimeInterval(t.timeInterval))
+                }.sorted()
+                if !soon.isEmpty {
+                    out.append("最近 3 条：" + soon.prefix(3).joined(separator: " / "))
+                }
+                DispatchQueue.main.async { completion(out) }
             }
         }
     }
@@ -143,6 +246,10 @@ struct ContentView: View {
     @State private var diagLines: [String] = []
     @State private var diagExpanded: Bool = false
     @State private var clearReadyConfirm: Bool = false
+    /// 待确认删除的记录（nil = 未点删除）。删除不可撤销，必须二次确认。
+    @State private var pendingDelete: CropRecord? = nil
+    /// 左侧录入面板是否收起。收起后记录区独占宽度，适合记录多时查看。
+    @State private var inputCollapsed: Bool = false
 
     private var selectedPreset: CropPreset? {
         presets.first { $0.id == selectedPresetID }
@@ -193,22 +300,34 @@ struct ContentView: View {
 
     var body: some View {
         NavigationStack {
-            // 左右分栏：左侧录入、右侧收菜记录，首屏即可看到记录
+            // 左右分栏：左侧录入、右侧收菜记录，首屏即可看到记录。
+            // 左侧可折叠：记录多的时候收起，把宽度全让给记录区。
             HStack(alignment: .top, spacing: 0) {
-                inputPane
-                    .frame(minWidth: 420, idealWidth: 480, maxWidth: 560)
+                if inputCollapsed {
+                    collapsedPane
+                } else {
+                    inputPane
+                        .frame(minWidth: 420, idealWidth: 480, maxWidth: 560)
+                }
                 Divider()
                 recordsPane
                     .frame(minWidth: 380)
             }
+            // 收起时窗口可以更窄，不必再为左栏留 420 的下限
+            .frame(minWidth: inputCollapsed ? 520 : 900)
             .navigationTitle("农场收菜")
             .navigationSubtitle("桌面实时倒计时")
             .background(.clear)
             .onAppear {
                 records = CropStore.load()
-                CropNotifier.requestPermission()
-                CropNotifier.reschedule(records)
+                // bootstrap 内部会在授权回调里重排通知，
+                // 不要在这里再排一次——那会在授权完成前被丢弃
+                CropNotifier.bootstrap()
                 diagLines = CropStore.diagnoseEnvironment()
+                // 通知自检是异步的，稍后回填到诊断框
+                CropNotifier.diagnose { lines in
+                    diagLines += ["— 通知 —"] + lines
+                }
                 CropStore.reloadWidget()
                 reloadPresets()
                 if minutesText.isEmpty, let m = presets.first?.minutes {
@@ -250,11 +369,96 @@ struct ContentView: View {
         } message: {
             Text("已到收菜时间的记录将从列表中移除，此操作不可撤销。")
         }
+        // 单条记录删除的二次确认。多茬时把各茬时间一并列出，
+        // 让用户知道删掉的是什么，而不是只看到一个菜名。
+        .alert("删除「\(pendingDelete?.name ?? "")」？",
+               isPresented: Binding(get: { pendingDelete != nil },
+                                    set: { if !$0 { pendingDelete = nil } })) {
+            Button("取消", role: .cancel) { pendingDelete = nil }
+            Button("删除", role: .destructive) { confirmDelete() }
+        } message: {
+            Text(deleteConfirmMessage)
+        }
+        .onReceive(NotificationCenter.default.publisher(
+            for: NSApplication.didBecomeActiveNotification)) { _ in
+            // 回到前台时重排：等待期间有些通知已经触发或过期，
+            // 不重排会留下失效条目，也会让新编辑的收菜时间漏掉提醒。
+            records = CropStore.load()
+            CropNotifier.reschedule(records)
+            CropNotifier.diagnose { lines in
+                let filtered = diagLines.filter { !$0.hasPrefix("—") && !$0.contains("通知") }
+                diagLines = filtered + lines
+            }
+        }
     }
 
     private func formatPreviewText(_ s: String) -> String { s }
 
     // MARK: - 左栏：录入
+
+    /// 收起态的左栏：只留一条窄边（展开按钮 + 关键统计 + 快速录入），
+    /// 不做成完全空白，否则左半屏空着反而浪费。
+    private var collapsedPane: some View {
+        VStack(spacing: 14) {
+            Button {
+                withAnimation(.smooth) { inputCollapsed = false }
+            } label: {
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 13, weight: .semibold))
+                    .frame(width: 28, height: 28)
+                    .background(Color.primary.opacity(0.07),
+                                in: RoundedRectangle(cornerRadius: 8))
+            }
+            .buttonStyle(.plain)
+            .help("展开录入面板")
+
+            // 收起时仍能看到最要紧的两个数。统计条本身低频刷新（5 秒），
+            // 这里跟着它走即可，不必再单独包秒级 TimelineView。
+            TimelineView(.periodic(from: .now, by: 5)) { ctx in
+                VStack(spacing: 8) {
+                    collapsedStat("待收", count: countPending(at: ctx.date), tint: .orange)
+                    collapsedStat("可收", count: countReady(at: ctx.date), tint: .green)
+                }
+            }
+            .padding(.top, 6)
+
+            // 「种下并记录」是最高频操作，收起后不该消失——
+            // 用当前选中的蔬菜和已填时长直接记一条，省得展开再点。
+            Button {
+                addRecord()
+            } label: {
+                Image(systemName: "plus")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(.white)
+                    .frame(width: 34, height: 34)
+                    .background(Color.accentColor, in: Circle())
+            }
+            .buttonStyle(.plain)
+            .disabled(!canAdd)
+            .opacity(canAdd ? 1 : 0.35)
+            .help(canAdd
+                  ? "种下「\(selectedPreset?.name ?? "")」并记录"
+                  : "请先选蔬菜并填写时长（需展开面板）")
+
+            Spacer(minLength: 0)
+        }
+        .padding(.vertical, 16)
+        .frame(width: 76)
+        .background(Color.primary.opacity(0.02))
+    }
+
+    private func collapsedStat(_ title: String, count: Int, tint: Color) -> some View {
+        VStack(spacing: 1) {
+            Text("\(count)")
+                .font(.title3.bold()).foregroundStyle(tint)
+            Text(title)
+                .font(.caption2).foregroundStyle(.secondary)
+        }
+        .frame(width: 56)
+        .padding(.vertical, 6)
+        .background(tint.opacity(0.10),
+                    in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+    }
 
     private var inputPane: some View {
         ScrollView {
@@ -270,6 +474,17 @@ struct ContentView: View {
                     .buttonStyle(.bordered)
                     .controlSize(.small)
                     .help("新增自定义蔬菜 / 管理已有蔬菜 / 导入导出备份")
+                    Button {
+                        withAnimation(.smooth) { inputCollapsed = true }
+                    } label: {
+                        Image(systemName: "chevron.left")
+                            .font(.system(size: 11, weight: .semibold))
+                            .frame(width: 22, height: 22)
+                            .background(Color.primary.opacity(0.07),
+                                        in: RoundedRectangle(cornerRadius: 6))
+                    }
+                    .buttonStyle(.plain)
+                    .help("收起左侧面板，记录区占满宽度")
                 }
                 ScrollView(.horizontal, showsIndicators: false) {
                     GlassEffectContainer(spacing: 14) {
@@ -529,10 +744,37 @@ struct ContentView: View {
         }
     }
 
+    /// 点删除不立即执行，先挂起等用户确认——避免误触就丢数据
     private func delete(_ r: CropRecord) {
+        pendingDelete = r
+    }
+
+    /// 删除确认框的正文：列出这条记录有几茬、什么时候收，
+    /// 让用户在不可撤销的操作前明确知道会删掉什么。
+    private var deleteConfirmMessage: String {
+        guard let r = pendingDelete else { return "" }
+        let n = r.harvests.count
+        if n <= 1 {
+            let when = r.harvests.first.map { fmt($0.date) } ?? "未设置"
+            return "收菜时间 \(when)。此操作不可撤销。"
+        }
+        let pending = r.harvests.filter { !$0.harvested }.count
+        let done = n - pending
+        let next = r.nextHarvest.map { fmt($0) } ?? "无"
+        return """
+        共 \(n) 茬，已收 \(done) 茬，待收 \(pending) 茬。\
+        下次收菜：\(next)。此操作不可撤销。
+        """
+    }
+
+    /// 确认删除：真正落盘 + 重排通知 + 刷小组件
+    private func confirmDelete() {
+        guard let r = pendingDelete else { return }
+        pendingDelete = nil
         records.removeAll { $0.id == r.id }
         CropStore.save(records)
         CropNotifier.reschedule(records)
+        CropStore.reloadWidget()
     }
 }
 
@@ -591,14 +833,13 @@ struct RecordRow: View {
 
                 // 每茬收菜时间单独一行：多茬时不再压缩成「第N茬」胶囊，
                 // 全部时间点直接铺开，方便一眼看清哪几茬已收、哪几茬还等着。
-                // 单茬时不画圆点 —— 一个孤零零的空心圈是噪音。
                 if r.harvests.isEmpty {
                     // 异常数据兜底：正常路径下 harvests 至少一茬（编辑弹窗不允许删空）
                     Text("未设置收菜时间")
                         .font(.caption).foregroundStyle(.tertiary)
                 } else {
                     ForEach(r.harvests) { c in
-                        harvestLine(c, showDot: r.harvests.count > 1)
+                        harvestLine(c)
                     }
                 }
 
@@ -631,42 +872,55 @@ struct RecordRow: View {
             .buttonStyle(.borderless)
             .tint(.red)
             .opacity(hovering ? 1 : 0.4)
-            .help("删除")
+            .help("删除这条记录（会先弹出确认）")
         }
         .padding(12)
         .glassEffect(in: RoundedRectangle(cornerRadius: 16, style: .continuous))
         .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous)
             .strokeBorder(Color.primary.opacity(0.07), lineWidth: 1))
+        // 整卡左侧的橙色竖条：行内高亮只占小块位置，扫列表时容易漏看，
+        // 加一条贯穿的边条让「快到点 / 已到点」的记录在余光里也能被捕捉到。
+        .overlay(alignment: .leading) {
+            if cardHighlightTint != nil {
+                RoundedRectangle(cornerRadius: 2)
+                    .fill(cardHighlightTint!)
+                    .frame(width: 3)
+                    .padding(.vertical, 10)
+                    .padding(.leading, 1)
+            }
+        }
         .shadow(color: .black.opacity(0.05), radius: 6, y: 2)
         .onHover { hovering = $0 }
         .animation(.easeOut(duration: 0.15), value: hovering)
     }
-}
 
-    /// 单茬收菜时间的一行：勾选态 + 时间 + 该茬的倒计时/状态。
-    /// showDot 只在多茬时为 true：圆点用来区分每一行，单茬时是多余噪音。
+    /// 卡片级高亮色：只要有任一茬到期或临近就返回橙色。nil = 无需高亮。
+    private var cardHighlightTint: Color? {
+        for h in r.harvests where !h.harvested {
+            if h.date.timeIntervalSinceNow <= Self.urgentSeconds { return .orange }
+        }
+        return nil
+    }
+
+    /// 单茬收菜时间的一行：时间 + 该茬的倒计时/状态。
     /// 时间是这行的主角，用 callout + 半粗 + 底色块托住，倒计时用等宽数字紧随其后。
-    private func harvestLine(_ c: HarvestCycle, showDot: Bool = true) -> some View {
+    private func harvestLine(_ c: HarvestCycle) -> some View {
         HStack(spacing: 8) {
-            if showDot {
-                // 圆点本身也要随「是否已收」变色，但不需要秒级刷新，
-                // 交给外层随records 变更重建即可。
-                Image(systemName: c.harvested ? "checkmark.circle.fill" : "circle")
-                    .font(.system(size: 11))
-                    .foregroundStyle(c.harvested ? Color.green : Color.secondary)
-                    .frame(width: 13)   // 固定宽度，保证多行的时间右对齐成一列
-            }
+            // 时刻是静态文本，不需要每秒重绘。
+            // 颜色只区分「已收 / 临近 / 常态」——临近判定用 Date() 粗算即可，
+            // 精确到秒的变化交给右侧倒计时（那里本来就在每秒重建）。
+            let left = c.date.timeIntervalSinceNow
+            let tint: Color = c.harvested ? .green
+                : (left <= 0 || left <= Self.urgentSeconds ? .orange : .accentColor)
+            let strength: Double = c.harvested ? 0.10
+                : (left <= 0 || left <= Self.urgentSeconds ? 0.22 : 0.16)
 
-            // 时刻是静态文本，不需要每秒重绘
             Text(fmt(c.date))
                 .font(.callout.weight(.semibold))
                 .monospacedDigit()
-                .foregroundStyle(c.harvested ? Color.secondary
-                                 : (c.date <= Date() ? Color.orange : Color.accentColor))
+                .foregroundStyle(c.harvested ? Color.secondary : tint)
                 .padding(.horizontal, 7).padding(.vertical, 2)
-                .background((c.harvested ? Color.green
-                              : (c.date <= Date() ? Color.orange : Color.accentColor))
-                             .opacity(c.harvested ? 0.10 : 0.16),
+                .background(tint.opacity(strength),
                             in: RoundedRectangle(cornerRadius: 6, style: .continuous))
 
             countdownView(c)
@@ -677,7 +931,7 @@ struct RecordRow: View {
 
     /// 倒计时单独包 TimelineView：
     /// **性能关键** —— 只有这一个 Text 会随时间重建，
-    /// 外层的圆点、时刻底色、整张列表都不重绘。
+    /// 外层的时刻底色、整张列表都不重绘。
     /// 若把 TimelineView 提到列表层，每秒会重算所有行，N 条记录 = N 倍无效工作。
     private func countdownView(_ c: HarvestCycle) -> some View {
         // 已收的不需要倒计时，也不该占用每秒刷新，直接返回静态视图
@@ -689,7 +943,9 @@ struct RecordRow: View {
 
         // 秒级刷新由系统统一调度（比自建 Timer 省资源，且 App 后台自动暂停）
         return AnyView(TimelineView(.periodic(from: .now, by: 1)) { context in
-            let overdue = c.date <= context.date
+            let left = c.date.timeIntervalSince(context.date)
+            let overdue = left <= 0
+
             if overdue {
                 // 到期未收：最需要被看到的状态，给实心胶囊而不是 00:00
                 Text("可收")
@@ -697,7 +953,18 @@ struct RecordRow: View {
                     .foregroundStyle(.white)
                     .padding(.horizontal, 6).padding(.vertical, 2)
                     .background(Color.orange, in: Capsule())
+            } else if left <= Self.urgentSeconds {
+                // 临近（≤20 分钟）：加深、加底色、加粗 —— 这段时间最可能
+                // 需要马上处理，扫列表时必须一眼看到。
+                Text(remainText(c.date, now: context.date))
+                    .font(.callout.weight(.bold))
+                    .monospacedDigit()
+                    .foregroundStyle(Color.white)
+                    .padding(.horizontal, 6).padding(.vertical, 2)
+                    .background(Color.orange, in: RoundedRectangle(cornerRadius: 6,
+                                                                    style: .continuous))
             } else {
+                // 常规：灰色等宽，不抢视线
                 Text(remainText(c.date, now: context.date))
                     .font(.callout.weight(.medium))
                     .monospacedDigit()
@@ -705,6 +972,9 @@ struct RecordRow: View {
             }
         })
     }
+
+    /// 临近阈值：20 分钟内进入高亮态
+    private static let urgentSeconds: TimeInterval = 20 * 60
 
     private func accessibilityText(_ c: HarvestCycle) -> String {
         let base = fmt(c.date)
@@ -715,8 +985,9 @@ struct RecordRow: View {
             ? "\(base) 还剩 \(h) 小时 \(m) 分"
             : "\(base) 还剩 \(m) 分 \(s) 秒"
     }
+}
 
-    /// 编辑单条记录：改名称/备注，并管理各茬收菜时间（反复续期，每茬可单独编辑）
+/// 编辑单条记录：改名称/备注，并管理各茬收菜时间（反复续期，每茬可单独编辑）
 struct EditRecordSheet: View {
     let record: CropRecord
     let onSave: (CropRecord) -> Void
@@ -734,6 +1005,9 @@ struct EditRecordSheet: View {
     @State private var noteText: String
     /// 各茬收菜（可在列表里逐行编辑时间、标记已收、删除）
     @State private var harvests: [HarvestCycle]
+
+    /// 待确认删除的茬（nil = 未点删除）
+    @State private var pendingCycleDelete: HarvestCycle? = nil
 
     // 新增一茬的表单
     @State private var newMode: NewMode = .afterLast
@@ -831,7 +1105,33 @@ struct EditRecordSheet: View {
                     Button("保存") { save() }.disabled(!valid)
                 }
             }
+            // 删茬的二次确认。注意不能删掉最后一茬，否则这条记录就没有收菜时间了。
+            .alert("删除这一茬？",
+                   isPresented: Binding(get: { pendingCycleDelete != nil },
+                                        set: { if !$0 { pendingCycleDelete = nil } })) {
+                Button("取消", role: .cancel) { pendingCycleDelete = nil }
+                Button("删除", role: .destructive) {
+                    if let id = pendingCycleDelete?.id {
+                        harvests.removeAll { $0.id == id }
+                    }
+                    pendingCycleDelete = nil
+                }
+            } message: {
+                if let c = pendingCycleDelete {
+                    Text(cycleDeleteMessage(c))
+                }
+            }
         }
+    }
+
+    /// 删茬确认正文：说清是哪一茬、什么时间、删完还剩几茬
+    private func cycleDeleteMessage(_ c: HarvestCycle) -> String {
+        let remain = harvests.count - 1
+        let base = "收菜时间 \(fmt(c.date))"
+        guard remain > 0 else {
+            return base + "。这是唯一一茬，删除后需要重新添加。"
+        }
+        return base + "。删除后还剩 \(remain) 茬。"
     }
 
     /// 「共 N 茬 · 已收 M · 下次 …」
@@ -975,7 +1275,8 @@ struct EditRecordSheet: View {
             .help("调整这一茬的时间")
 
             Button {
-                harvests.removeAll { $0.id == h.wrappedValue.id }
+                // 删茬同样不可撤销，先挂起等确认
+                pendingCycleDelete = h.wrappedValue
             } label: {
                 Image(systemName: "trash")
                     .font(.system(size: 11))
@@ -984,7 +1285,7 @@ struct EditRecordSheet: View {
             }
             .buttonStyle(.borderless)
             .tint(.red)
-            .help("删除这一茬")
+            .help("删除这一茬（会先弹出确认）")
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 6)

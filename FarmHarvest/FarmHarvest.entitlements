@@ -13,5 +13,9 @@
 	     表现为点击导出/导入没有任何反应。 -->
 	<key>com.apple.security.files.user-selected.read-write</key>
 	<true/>
+	<!-- 本地通知（收菜到点提醒）需要。沙盒 App 缺这一项时
+	     UNUserNotificationCenter 的 add() 会静默失败，一条通知都发不出来。 -->
+	<key>com.apple.security.personal-information</key>
+	<true/>
 </dict>
 </plist>
