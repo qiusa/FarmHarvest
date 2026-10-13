@@ -554,3 +554,121 @@ extension Color {
         self.init(red: r, green: g, blue: b)
     }
 }
+
+// MARK: - 备注预选值与分组高亮（主 App 与 Widget 共用，两端展示必须一致）
+
+/// 标签分组：用于高亮区分同一类预选值
+enum NotePresetGroup: String, CaseIterable, Identifiable {
+    case bean = "豆"          // 大豆/绿豆/红豆/蚕豆 种子
+    case sandalwood = "名贵"  // 麻梨/老山檀/奇楠沉香 树苗
+    var id: String { rawValue }
+    /// 该组的主题色：豆=琥珀，名贵=紫
+    var color: Color {
+        switch self {
+        case .bean:       return Color(red: 0.93, green: 0.60, blue: 0.18)
+        case .sandalwood: return Color(red: 0.58, green: 0.36, blue: 0.82)
+        }
+    }
+}
+
+/// 单个备注预选值（文本 + 可选分组）
+struct NotePreset: Identifiable {
+    let id: String
+    let group: NotePresetGroup?
+    init(_ id: String, group: NotePresetGroup? = nil) {
+        self.id = id
+        self.group = group
+    }
+}
+
+/// 备注预选值清单与渲染。预选栏（录入/编辑）与记录行（主 App / Widget）共用，
+/// 保证三处展示一致。
+enum NotePresets {
+    /// 种子预选值（第一行），豆组高亮
+    static let seeds: [NotePreset] = [
+        NotePreset("甘薯种子"), NotePreset("番茄种子"), NotePreset("白菜种子"), NotePreset("酸模种子"),
+        NotePreset("大豆种子", group: .bean), NotePreset("南瓜种子"), NotePreset("茄子种子"),
+        NotePreset("千穗谷种子"), NotePreset("小麦种子"),
+        NotePreset("绿豆种子", group: .bean), NotePreset("西瓜种子"), NotePreset("辣椒种子"),
+        NotePreset("雪绯花种子"), NotePreset("大麦种子"),
+        NotePreset("红豆种子", group: .bean), NotePreset("豆薯种子"), NotePreset("枸杞种子"),
+        NotePreset("甘蓝种子"), NotePreset("山菊种子"),
+        NotePreset("蚕豆种子", group: .bean), NotePreset("冬瓜种子"), NotePreset("土豆种子"),
+        NotePreset("青桑种子"), NotePreset("燕麦种子"), NotePreset("豌豆种子")
+    ]
+
+    /// 树苗预选值（第二行），名贵组高亮
+    static let seedlings: [NotePreset] = [
+        NotePreset("乌木树苗"), NotePreset("金丝楠树苗"), NotePreset("黄花梨树苗"),
+        NotePreset("小叶紫檀树苗"), NotePreset("奇楠沉香树苗", group: .sandalwood),
+        NotePreset("枣树苗"), NotePreset("桃树苗"), NotePreset("黄杨树苗"), NotePreset("桑树苗"),
+        NotePreset("麻梨树苗", group: .sandalwood), NotePreset("鸡翅树苗"), NotePreset("黄檀树苗"),
+        NotePreset("大红酸枝苗"), NotePreset("老山檀树苗", group: .sandalwood), NotePreset("崖柏树苗")
+    ]
+
+    /// 给定预选文本，返回其所属分组（nil = 普通项，不高亮）
+    static func groupOf(_ text: String) -> NotePresetGroup? {
+        for p in seeds + seedlings where p.id == text {
+            return p.group
+        }
+        return nil
+    }
+
+    /// 备注渲染：按「、」拆词，命中分组的词用组色 + ● 色点，其余保持灰色。
+    /// 返回单段 Text（内部是 AttributedString），调用方可自由设置字体与 lineLimit。
+    static func highlighted(_ note: String) -> Text {
+        var result = AttributedString()
+        let tokens = note.components(separatedBy: "、")
+        for i in tokens.indices {
+            let t = tokens[i].trimmingCharacters(in: .whitespacesAndNewlines)
+            if let g = groupOf(t) {
+                var dot = AttributedString("●")
+                dot.foregroundColor = g.color
+                var word = AttributedString(t)
+                word.foregroundColor = g.color
+                result += dot
+                result += AttributedString(" ")
+                result += word
+            } else {
+                var word = AttributedString(t)
+                word.foregroundColor = .secondary
+                result += word
+            }
+            if i < tokens.count - 1 {
+                var sep = AttributedString("、")
+                sep.foregroundColor = .secondary
+                result += sep
+            }
+        }
+        return Text(result)
+    }
+}
+
+// MARK: - 时间格式化（主 App 与 Widget 共用，保证两端展示一致）
+
+/// 收菜时间统一格式：MM-dd HH:mm（与 App 记录行一致）
+func fmt(_ d: Date) -> String {
+    let f = DateFormatter()
+    f.dateFormat = "MM-dd HH:mm"
+    return f.string(from: d)
+}
+
+/// 距离某个时间点还有多久。
+/// now 参数可选：实时倒计时场景应传入 TimelineView 的 context.date，
+/// 保持与「是否到期」的判定同源，否则两者会差出一次 tick 的误差。
+func remainText(_ target: Date, now: Date = Date()) -> String {
+    let s = max(0, Int(target.timeIntervalSince(now)))
+    let h = s / 3600
+    let m = (s % 3600) / 60
+    let sec = s % 60
+    return h > 0
+        ? String(format: "%d:%02d:%02d", h, m, sec)
+        : String(format: "%02d:%02d", m, sec)
+}
+
+/// 按记录倒计时：有多次采收时对准「下一茬」而不是首次，
+/// 否则首次过了之后会永远停在 00:00，看不出还要等多久收第二茬。
+func remainText(_ r: CropRecord) -> String {
+    guard let next = r.nextHarvest else { return "可收获" }
+    return remainText(next)
+}

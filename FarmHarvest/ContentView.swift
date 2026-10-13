@@ -10,12 +10,6 @@ enum InputMode: String, CaseIterable, Identifiable {
     var id: String { rawValue }
 }
 
-func fmt(_ d: Date) -> String {
-    let f = DateFormatter()
-    f.dateFormat = "MM-dd HH:mm"
-    return f.string(from: d)
-}
-
 /// 把总分钟数格式化为「x 小时 y 分钟」（整小时省略分钟部分）
 func formatDurationText(_ total: Int) -> String {
     let h = total / 60
@@ -23,26 +17,6 @@ func formatDurationText(_ total: Int) -> String {
     if h > 0 && m > 0 { return "\(h) 小时 \(m) 分钟" }
     if h > 0 { return "\(h) 小时" }
     return "\(m) 分钟"
-}
-
-func remainText(_ r: CropRecord) -> String {
-    // 有多次采收时，倒计时对准「下一茬」而不是首次，
-    // 否则首次过了之后会永远停在 00:00，看不出还要等多久收第二茬。
-    guard let next = r.nextHarvest else { return "可收获" }
-    return remainText(next)
-}
-
-/// 距离某个时间点还有多久。
-/// now 参数可选：实时倒计时场景应传入 TimelineView 的 context.date，
-/// 保持与「是否到期」的判定同源，否则两者会差出一次 tick 的误差。
-func remainText(_ target: Date, now: Date = Date()) -> String {
-    let s = max(0, Int(target.timeIntervalSince(now)))
-    let h = s / 3600
-    let m = (s % 3600) / 60
-    let sec = s % 60
-    return h > 0
-        ? String(format: "%d:%02d:%02d", h, m, sec)
-        : String(format: "%02d:%02d", m, sec)
 }
 
 /// 本地通知：到期前 1 分钟提醒（主 App 负责调度，Widget 不可发通知）
@@ -864,7 +838,7 @@ struct RecordRow: View {
                 }
 
                 if let note = r.note, !note.isEmpty {
-                    highlightedNote(note)
+                    NotePresets.highlighted(note)
                         .font(.caption2)
                         .lineLimit(2)
                 }
@@ -1003,35 +977,6 @@ struct RecordRow: View {
         return h > 0
             ? "\(base) 还剩 \(h) 小时 \(m) 分"
             : "\(base) 还剩 \(m) 分 \(s) 秒"
-    }
-
-    /// 把备注按「、」拆词渲染：命中分组的词用组色 + 色点高亮（与预选栏一致），
-    /// 其余保持灰色；整体仍是单段可换行的 Text（保留记录行 lineLimit）。
-    private func highlightedNote(_ note: String) -> Text {
-        var result = AttributedString()
-        let tokens = note.components(separatedBy: "、")
-        for i in tokens.indices {
-            let t = tokens[i].trimmingCharacters(in: .whitespacesAndNewlines)
-            if let g = NotePresetBar.groupOf(t) {
-                var dot = AttributedString("●")
-                dot.foregroundColor = g.color
-                var word = AttributedString(t)
-                word.foregroundColor = g.color
-                result += dot
-                result += AttributedString(" ")
-                result += word
-            } else {
-                var word = AttributedString(t)
-                word.foregroundColor = .secondary
-                result += word
-            }
-            if i < tokens.count - 1 {
-                var sep = AttributedString("、")
-                sep.foregroundColor = .secondary
-                result += sep
-            }
-        }
-        return Text(result)
     }
 }
 
@@ -1523,51 +1468,7 @@ struct EditRecordSheet: View {
 struct NotePresetBar: View {
     @Binding var noteText: String
 
-    /// 标签分组：用于高亮区分同一类预选值
-    enum Group: String, CaseIterable, Identifiable {
-        case bean = "豆"          // 大豆/绿豆/红豆/蚕豆 种子
-        case sandalwood = "名贵"  // 麻梨/老山檀/奇楠沉香 树苗
-        var id: String { rawValue }
-        /// 该组的主题色：豆=琥珀，名贵=紫
-        var color: Color {
-            switch self {
-            case .bean:       return Color(red: 0.93, green: 0.60, blue: 0.18)
-            case .sandalwood: return Color(red: 0.58, green: 0.36, blue: 0.82)
-            }
-        }
-    }
-
-    /// 单个预选值（文本 + 可选分组）
-    struct Preset: Identifiable {
-        let id: String
-        let group: Group?
-        init(_ id: String, group: Group? = nil) {
-            self.id = id
-            self.group = group
-        }
-    }
-
-    /// 种子预选值（第一行），豆组高亮
-    private static let seedPresets: [Preset] = [
-        Preset("甘薯种子"), Preset("番茄种子"), Preset("白菜种子"), Preset("酸模种子"),
-        Preset("大豆种子", group: .bean), Preset("南瓜种子"), Preset("茄子种子"),
-        Preset("千穗谷种子"), Preset("小麦种子"),
-        Preset("绿豆种子", group: .bean), Preset("西瓜种子"), Preset("辣椒种子"),
-        Preset("雪绯花种子"), Preset("大麦种子"),
-        Preset("红豆种子", group: .bean), Preset("豆薯种子"), Preset("枸杞种子"),
-        Preset("甘蓝种子"), Preset("山菊种子"),
-        Preset("蚕豆种子", group: .bean), Preset("冬瓜种子"), Preset("土豆种子"),
-        Preset("青桑种子"), Preset("燕麦种子"), Preset("豌豆种子")
-    ]
-
-    /// 树苗预选值（第二行），名贵组高亮
-    private static let seedlingPresets: [Preset] = [
-        Preset("乌木树苗"), Preset("金丝楠树苗"), Preset("黄花梨树苗"),
-        Preset("小叶紫檀树苗"), Preset("奇楠沉香树苗", group: .sandalwood),
-        Preset("枣树苗"), Preset("桃树苗"), Preset("黄杨树苗"), Preset("桑树苗"),
-        Preset("麻梨树苗", group: .sandalwood), Preset("鸡翅树苗"), Preset("黄檀树苗"),
-        Preset("大红酸枝苗"), Preset("老山檀树苗", group: .sandalwood), Preset("崖柏树苗")
-    ]
+    // 预选值清单、分组与配色统一在 NotePresets / NotePresetGroup（CropStore.swift，主 App 与 Widget 共用）
 
     /// 当前已选中的 token 集合（按「、」切分）
     private var selectedTokens: Set<String> {
@@ -1578,10 +1479,10 @@ struct NotePresetBar: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            presetRow(Self.seedPresets, label: "种子")
-            presetRow(Self.seedlingPresets, label: "树苗")
+            presetRow(NotePresets.seeds, label: "种子")
+            presetRow(NotePresets.seedlings, label: "树苗")
             HStack(spacing: 14) {
-                ForEach(Group.allCases) { g in
+                ForEach(NotePresetGroup.allCases) { g in
                     HStack(spacing: 4) {
                         Circle().fill(g.color).frame(width: 7, height: 7)
                         Text(g.rawValue).font(.caption2).foregroundStyle(.secondary)
@@ -1594,7 +1495,7 @@ struct NotePresetBar: View {
         }
     }
 
-    private func presetRow(_ presets: [Preset], label: String) -> some View {
+    private func presetRow(_ presets: [NotePreset], label: String) -> some View {
         HStack(alignment: .top, spacing: 8) {
             Text(label)
                 .font(.caption2)
@@ -1609,7 +1510,7 @@ struct NotePresetBar: View {
         }
     }
 
-    private func chip(_ p: Preset) -> some View {
+    private func chip(_ p: NotePreset) -> some View {
         let on = selectedTokens.contains(p.id)
         let gc = p.group?.color
         return Button {
@@ -1658,14 +1559,6 @@ struct NotePresetBar: View {
             arr.append(preset)
         }
         noteText = arr.joined(separator: "、")
-    }
-
-    /// 给定预选文本，返回其所属分组（用于收菜记录行高亮区分）
-    static func groupOf(_ text: String) -> Group? {
-        for p in seedPresets + seedlingPresets where p.id == text {
-            return p.group
-        }
-        return nil
     }
 }
 
