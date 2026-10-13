@@ -1,0 +1,67 @@
+# ===== macOS =====
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+Thumbs.db
+*.swp
+*~
+
+# ===== Xcode 用户态（每人不同，不应进版本库）=====
+#xcuserdata/ 是 Xcode 的个人配置（断点、窗口布局、scheme 自定义）
+xcuserdata/
+*.xcuserstate
+*.xcscmblueprint
+*.xccheckout
+*.moved-aside
+*.perspectivev3
+*.pbxuser
+!default.pbxuser
+!default.xcworkspace
+
+# 顺带的临时产物
+*.hmap
+*.ipa
+*.dSYM.zip
+*.dSYM
+
+# Swift Package Manager（目前用不到，xcodebuild 走SPM 时才生效）
+.build/
+.swiftpm/
+Packages/
+Package.resolved
+
+# ===== 构建输出 =====
+# 注意：DerivedData 在 ~/Library 下，不在项目内，
+# 但用 -derivedDataPath 指向项目内时会被这里忽略掉。
+DerivedData/
+build/
+Build/
+*.app
+*.appex
+# 签名相关
+*.mobileprovision
+*.provisionprofile
+
+# ===== 本项目的工具产物 =====
+# 打包好的安装包：3.5MB 二进制，每次改动都提交会让仓库持续膨胀，
+# 而 git 本来也不是分发渠道（用 GitHub Releases 传 dmg 更合适）。
+# 本地文件保留，只是不再跟踪。
+dist/
+
+# 图标生成脚本的中间产物（最终 PNG 在 Assets.xcassets 里，要保留）
+FarmHarvest/Icon/*.tmp
+FarmHarvest/Icon/_out/
+
+# 排查问题时的临时脚本 / 日志 / 截图
+*.log
+*.scratch.swift
+/tmp/
+# 手工排查留下的临时目录（例如 ~/Desktop/FarmHarvest-备份-*）
+FarmHarvest-备份-*/
+
+# ===== 编辑器 =====
+.vscode/
+.idea/
+*.iml
