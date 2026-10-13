@@ -1,0 +1,89 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 56;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		AB0000000000000000000101 /* App.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000101 /* App.swift */; };
+		AB0000000000000000000102 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000102 /* ContentView.swift */; };
+		AB0000000000000000000103 /* CropStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000103 /* CropStore.swift */; };
+		AB0000000000000000000201 /* FarmHarvestWidget.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000201 /* FarmHarvestWidget.swift */; };
+		AB0000000000000000000202 /* CropStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000103 /* CropStore.swift */; };
+		AB0000000000000000000E01 /* FarmHarvestWidget.appex in Embed App Extensions */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000A02 /* FarmHarvestWidget.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		AB0000000000000000000R01 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000R01 /* Assets.xcassets */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		AC0000000000000000000101 /* PBXContainerItemProxy */ = {isa = PBXContainerItemProxy; containerPortal = B30000000000000000000001 /* Project object */; proxyType = 1; remoteGlobalIDString = AF0000000000000000000002; remoteInfo = FarmHarvestWidget; };
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXFileReference section */
+		AA0000000000000000000101 /* App.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = App.swift; sourceTree = "<group>"; };
+		AA0000000000000000000102 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
+		AA0000000000000000000103 /* CropStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FarmHarvest/CropStore.swift; sourceTree = SOURCE_ROOT; };
+		AA0000000000000000000104 /* FarmHarvest.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = FarmHarvest.entitlements; sourceTree = "<group>"; };
+		AA0000000000000000000201 /* FarmHarvestWidget.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FarmHarvestWidget.swift; sourceTree = "<group>"; };
+		AA0000000000000000000203 /* FarmHarvestWidget.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = FarmHarvestWidget.entitlements; sourceTree = "<group>"; };
+		AA0000000000000000000R01 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		AA0000000000000000000A01 /* FarmHarvest.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = FarmHarvest.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		AA0000000000000000000A02 /* FarmHarvestWidget.appex */ = {isa = PBXFileReference; explicitFileType = wrapper.app-extension; includeInIndex = 0; path = FarmHarvestWidget.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		B0000000000000000000F01 /* Frameworks */ = {isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
+		B0000000000000000000F02 /* Frameworks */ = {isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXResourcesBuildPhase section */
+		B0000000000000000000R02 /* Resources */ = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (AB0000000000000000000R01 /* Assets.xcassets in Resources */,); runOnlyForDeploymentPostprocessing = 0; };
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXGroup section */
+		AE0000000000000000000001 = {isa = PBXGroup; children = (AE0000000000000000000002, AE0000000000000000000003, AE0000000000000000000004); sourceTree = "<group>"; };
+		AE0000000000000000000002 /* FarmHarvest */ = {isa = PBXGroup; children = (AA0000000000000000000101, AA0000000000000000000102, AA0000000000000000000103, AA0000000000000000000104, AA0000000000000000000R01); path = FarmHarvest; sourceTree = "<group>"; };
+		AE0000000000000000000003 /* FarmHarvestWidget */ = {isa = PBXGroup; children = (AA0000000000000000000201, AA0000000000000000000203, AA0000000000000000000103); path = FarmHarvestWidget; sourceTree = "<group>"; };
+		AE0000000000000000000004 /* Products */ = {isa = PBXGroup; children = (AA0000000000000000000A01, AA0000000000000000000A02); name = Products; sourceTree = "<group>"; };
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		AF0000000000000000000001 /* FarmHarvest */ = {isa = PBXNativeTarget; buildConfigurationList = B2000000000000000000A00 /* Build configuration list for PBXNativeTarget "FarmHarvest" */; buildPhases = (B0000000000000000000S01 /* Sources */, B0000000000000000000F01 /* Frameworks */, B0000000000000000000R02 /* Resources */, B0000000000000000000E01 /* Embed App Extensions */); buildRules = (); dependencies = (AD0000000000000000000101 /* PBXTargetDependency */); name = FarmHarvest; productName = FarmHarvest; productReference = AA0000000000000000000A01 /* FarmHarvest.app */; productType = "com.apple.product-type.application"; };
+		AF0000000000000000000002 /* FarmHarvestWidget */ = {isa = PBXNativeTarget; buildConfigurationList = B2000000000000000000W00 /* Build configuration list for PBXNativeTarget "FarmHarvestWidget" */; buildPhases = (B0000000000000000000S02 /* Sources */, B0000000000000000000F02 /* Frameworks */); buildRules = (); dependencies = (); name = FarmHarvestWidget; productName = FarmHarvestWidget; productReference = AA0000000000000000000A02 /* FarmHarvestWidget.appex */; productType = "com.apple.product-type.app-extension"; };
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		B30000000000000000000001 /* Project object */ = {isa = PBXProject; attributes = {LastUpgradeCheck = 1600; TargetAttributes = {AF0000000000000000000001 = {CreatedOnToolsVersion = 16.0; }; AF0000000000000000000002 = {CreatedOnToolsVersion = 16.0; }; }; }; buildConfigurationList = B2000000000000000000P00 /* Build configuration list for PBXProject "FarmHarvest" */; compatibilityVersion = "Xcode 14.0"; developmentRegion = en; hasScannedForEncodings = 0; knownRegions = (en, Base); mainGroup = AE0000000000000000000001; productRefGroup = AE0000000000000000000004 /* Products */; projectDirPath = ""; projectRoot = ""; targets = (AF0000000000000000000001 /* FarmHarvest */, AF0000000000000000000002 /* FarmHarvestWidget */); };
+/* End PBXProject section */
+
+/* Begin PBXSourcesBuildPhase section */
+		B0000000000000000000S01 /* Sources */ = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (AB0000000000000000000101 /* App.swift in Sources */, AB0000000000000000000102 /* ContentView.swift in Sources */, AB0000000000000000000103 /* CropStore.swift in Sources */); runOnlyForDeploymentPostprocessing = 0; };
+		B0000000000000000000S02 /* Sources */ = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (AB0000000000000000000201 /* FarmHarvestWidget.swift in Sources */, AB0000000000000000000202 /* CropStore.swift in Sources */); runOnlyForDeploymentPostprocessing = 0; };
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		AD0000000000000000000101 /* PBXTargetDependency */ = {isa = PBXTargetDependency; target = AF0000000000000000000002 /* FarmHarvestWidget */; targetProxy = AC0000000000000000000101 /* PBXContainerItemProxy */; };
+/* End PBXTargetDependency section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		B0000000000000000000E01 /* Embed App Extensions */ = {isa = PBXCopyFilesBuildPhase; buildActionMask = 2147483647; dstPath = ""; dstSubfolderSpec = 13; files = (AB0000000000000000000E01 /* FarmHarvestWidget.appex in Embed App Extensions */); name = "Embed App Extensions"; runOnlyForDeploymentPostprocessing = 0; };
+/* End PBXCopyFilesBuildPhase section */
+
+/* Begin XCBuildConfiguration section */
+		B1000000000000000000P01 /* Debug */ = {isa = XCBuildConfiguration; buildSettings = {ALWAYS_SEARCH_USER_PATHS = NO; CLANG_ANALYZER_NONNULL = YES; CLANG_ENABLE_MODULES = YES; CLANG_ENABLE_OBJC_ARC = YES; COPY_PHASE_STRIP = NO; DEBUG_INFORMATION_FORMAT = dwarf; ENABLE_STRICT_OBJC_MSGSEND = YES; ENABLE_TESTABILITY = YES; GCC_C_LANGUAGE_STANDARD = gnu17; GCC_DYNAMIC_NO_PIC = NO; GCC_NO_COMMON_BLOCKS = YES; GCC_OPTIMIZATION_LEVEL = 0; GCC_PREPROCESSOR_DEFINITIONS = ("DEBUG=1", "$(inherited)"); MACOSX_DEPLOYMENT_TARGET = 26.0; MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE; MTL_FAST_MATH = YES; ONLY_ACTIVE_ARCH = YES; SDKROOT = macosx; SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG; SWIFT_OPTIMIZATION_LEVEL = "-Onone"; }; name = Debug; };
+		B1000000000000000000P02 /* Release */ = {isa = XCBuildConfiguration; buildSettings = {ALWAYS_SEARCH_USER_PATHS = NO; CLANG_ANALYZER_NONNULL = YES; CLANG_ENABLE_MODULES = YES; CLANG_ENABLE_OBJC_ARC = YES; COPY_PHASE_STRIP = NO; DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym"; ENABLE_NS_ASSERTIONS = NO; ENABLE_STRICT_OBJC_MSGSEND = YES; GCC_C_LANGUAGE_STANDARD = gnu17; GCC_NO_COMMON_BLOCKS = YES; MACOSX_DEPLOYMENT_TARGET = 26.0; MTL_ENABLE_DEBUG_INFO = NO; MTL_FAST_MATH = YES; SDKROOT = macosx; SWIFT_COMPILATION_MODE = wholemodule; SWIFT_OPTIMIZATION_LEVEL = "-O"; }; name = Release; };
+		B1000000000000000000A01 /* Debug */ = {isa = XCBuildConfiguration; buildSettings = {ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon; ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES; CODE_SIGN_ENTITLEMENTS = FarmHarvest/FarmHarvest.entitlements; CODE_SIGN_STYLE = Automatic; COMBINE_HIDPI_IMAGES = YES; CURRENT_PROJECT_VERSION = 1; DEVELOPMENT_TEAM = ""; ENABLE_HARDENED_RUNTIME = YES; GENERATE_INFOPLIST_FILE = YES; INFOPLIST_KEY_NSHumanReadableCopyright = "Yixin Technology"; LD_RUNPATH_SEARCH_PATHS = ("$(inherited)", "@executable_path/../Frameworks"); MARKETING_VERSION = 1.0; PRODUCT_BUNDLE_IDENTIFIER = com.yixin.farmharvest; PRODUCT_NAME = "$(TARGET_NAME)"; SWIFT_EMIT_LOC_STRINGS = YES; SWIFT_VERSION = 5.0; }; name = Debug; };
+		B1000000000000000000A02 /* Release */ = {isa = XCBuildConfiguration; buildSettings = {ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon; ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES; CODE_SIGN_ENTITLEMENTS = FarmHarvest/FarmHarvest.entitlements; CODE_SIGN_STYLE = Automatic; COMBINE_HIDPI_IMAGES = YES; CURRENT_PROJECT_VERSION = 1; DEVELOPMENT_TEAM = ""; ENABLE_HARDENED_RUNTIME = YES; GENERATE_INFOPLIST_FILE = YES; INFOPLIST_KEY_NSHumanReadableCopyright = "Yixin Technology"; LD_RUNPATH_SEARCH_PATHS = ("$(inherited)", "@executable_path/../Frameworks"); MARKETING_VERSION = 1.0; PRODUCT_BUNDLE_IDENTIFIER = com.yixin.farmharvest; PRODUCT_NAME = "$(TARGET_NAME)"; SWIFT_EMIT_LOC_STRINGS = YES; SWIFT_VERSION = 5.0; }; name = Release; };
+		B1000000000000000000W01 /* Debug */ = {isa = XCBuildConfiguration; buildSettings = {CODE_SIGN_ENTITLEMENTS = FarmHarvestWidget/FarmHarvestWidget.entitlements; CODE_SIGN_STYLE = Automatic; CURRENT_PROJECT_VERSION = 1; DEVELOPMENT_TEAM = ""; ENABLE_HARDENED_RUNTIME = YES; INFOPLIST_FILE = FarmHarvestWidget/Info.plist; INFOPLIST_KEY_NSHumanReadableCopyright = "Yixin Technology"; LD_RUNPATH_SEARCH_PATHS = ("$(inherited)", "@executable_path/../Frameworks", "@executable_path/../../../../Frameworks"); MARKETING_VERSION = 1.0; PRODUCT_BUNDLE_IDENTIFIER = com.yixin.farmharvest.widget; PRODUCT_NAME = "$(TARGET_NAME)"; SKIP_INSTALL = YES; SWIFT_EMIT_LOC_STRINGS = YES; SWIFT_VERSION = 5.0; }; name = Debug; };
+		B1000000000000000000W02 /* Release */ = {isa = XCBuildConfiguration; buildSettings = {CODE_SIGN_ENTITLEMENTS = FarmHarvestWidget/FarmHarvestWidget.entitlements; CODE_SIGN_STYLE = Automatic; CURRENT_PROJECT_VERSION = 1; DEVELOPMENT_TEAM = ""; ENABLE_HARDENED_RUNTIME = YES; INFOPLIST_FILE = FarmHarvestWidget/Info.plist; INFOPLIST_KEY_NSHumanReadableCopyright = "Yixin Technology"; LD_RUNPATH_SEARCH_PATHS = ("$(inherited)", "@executable_path/../Frameworks", "@executable_path/../../../../Frameworks"); MARKETING_VERSION = 1.0; PRODUCT_BUNDLE_IDENTIFIER = com.yixin.farmharvest.widget; PRODUCT_NAME = "$(TARGET_NAME)"; SKIP_INSTALL = YES; SWIFT_EMIT_LOC_STRINGS = YES; SWIFT_VERSION = 5.0; }; name = Release; };
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		B2000000000000000000P00 /* Build configuration list for PBXProject "FarmHarvest" */ = {isa = XCConfigurationList; buildConfigurations = (B1000000000000000000P01 /* Debug */, B1000000000000000000P02 /* Release */); defaultConfigurationIsVisible = 0; defaultConfigurationName = Debug; };
+		B2000000000000000000A00 /* Build configuration list for PBXNativeTarget "FarmHarvest" */ = {isa = XCConfigurationList; buildConfigurations = (B1000000000000000000A01 /* Debug */, B1000000000000000000A02 /* Release */); defaultConfigurationIsVisible = 0; defaultConfigurationName = Debug; };
+		B2000000000000000000W00 /* Build configuration list for PBXNativeTarget "FarmHarvestWidget" */ = {isa = XCConfigurationList; buildConfigurations = (B1000000000000000000W01 /* Debug */, B1000000000000000000W02 /* Release */); defaultConfigurationIsVisible = 0; defaultConfigurationName = Debug; };
+/* End XCConfigurationList section */
+	};
+	rootObject = B30000000000000000000001 /* Project object */;
+}

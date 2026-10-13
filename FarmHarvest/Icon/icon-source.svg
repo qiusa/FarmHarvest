@@ -1,0 +1,86 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <defs>
+    <!-- 背景渐变：顶部清新绿 -> 底部深绿 -->
+    <linearGradient id="bg" x1="0.15" y1="0" x2="0.55" y2="1">
+      <stop offset="0%"   stop-color="#93E05C"/>
+      <stop offset="40%"  stop-color="#58BA3C"/>
+      <stop offset="100%" stop-color="#28682F"/>
+    </linearGradient>
+
+    <!-- 左上柔光 -->
+    <radialGradient id="glow" cx="0.28" cy="0.2" r="0.78">
+      <stop offset="0%"   stop-color="#FFFFFF" stop-opacity="0.30"/>
+      <stop offset="55%"  stop-color="#FFFFFF" stop-opacity="0.06"/>
+      <stop offset="100%" stop-color="#FFFFFF" stop-opacity="0"/>
+    </radialGradient>
+
+    <!-- 底部暗角，增加体积感 -->
+    <linearGradient id="footShade" x1="0" y1="0.5" x2="0" y2="1">
+      <stop offset="0%"   stop-color="#000000" stop-opacity="0"/>
+      <stop offset="100%" stop-color="#000000" stop-opacity="0.20"/>
+    </linearGradient>
+
+    <!-- 幼苗渐变（带一点奶油暖调，避免纯白过于单薄） -->
+    <linearGradient id="sprout" x1="0.3" y1="0.05" x2="0.7" y2="1">
+      <stop offset="0%"   stop-color="#FFFFFF"/>
+      <stop offset="100%" stop-color="#E4F4D8"/>
+    </linearGradient>
+
+    <!-- 橙环渐变：左上亮 -> 右下实 -->
+    <linearGradient id="ring" x1="0.18" y1="0.06" x2="0.82" y2="0.94">
+      <stop offset="0%"   stop-color="#FFB863"/>
+      <stop offset="50%"  stop-color="#FF8C42"/>
+      <stop offset="100%" stop-color="#EE6420"/>
+    </linearGradient>
+
+    <!-- 幼苗投影 -->
+    <filter id="sproutShadow" x="-40%" y="-40%" width="180%" height="180%">
+      <feDropShadow dx="0" dy="10" stdDeviation="12" flood-color="#14401A" flood-opacity="0.30"/>
+    </filter>
+  </defs>
+
+  <!-- ========== 图标主体（macOS 标准 824x824 网格，居中于 1024 画布） ========== -->
+  <g>
+    <!-- 圆角方底 -->
+    <rect x="100" y="100" width="824" height="824" rx="185" fill="url(#bg)"/>
+    <rect x="100" y="100" width="824" height="824" rx="185" fill="url(#glow)"/>
+    <rect x="100" y="100" width="824" height="824" rx="185" fill="url(#footShade)"/>
+
+    <!-- 内描边：模拟系统图标的厚度高光 -->
+    <rect x="106" y="106" width="812" height="812" rx="179"
+          fill="none" stroke="#FFFFFF" stroke-opacity="0.16" stroke-width="4"/>
+
+    <!-- ========== 倒计时进度环（橙色，缺口在右上 45°） ========== -->
+    <!-- 投影层 -->
+    <path d="M 609.2 303.6 A 230 230 0 1 0 720.4 414.8"
+          transform="translate(0,10)"
+          fill="none" stroke="#154A1C" stroke-opacity="0.32"
+          stroke-width="94" stroke-linecap="round"/>
+    <!-- 主体 -->
+    <path d="M 609.2 303.6 A 230 230 0 1 0 720.4 414.8"
+          fill="none" stroke="url(#ring)"
+          stroke-width="94" stroke-linecap="round"/>
+    <!-- 环上缘高光（左侧一段弧，让环有厚度感） -->
+    <path d="M 311.3 343.6 A 262 262 0 0 0 297.4 662.4"
+          fill="none" stroke="#FFFFFF" stroke-opacity="0.30"
+          stroke-width="22" stroke-linecap="round"/>
+
+    <!-- ========== 中央幼苗 ========== -->
+    <g filter="url(#sproutShadow)" fill="url(#sprout)">
+      <!-- 茎 -->
+      <rect x="487" y="452" width="50" height="214" rx="25"/>
+      <!-- 右叶（更大更饱满） -->
+      <path d="M 512 522 C 512 442 570 382 668 392 C 660 488 604 540 512 522 Z"/>
+      <!-- 左叶 -->
+      <path d="M 512 566 C 436 564 372 512 366 424 C 446 416 506 468 512 566 Z"/>
+    </g>
+
+    <!-- 叶片中脉（极淡，增强细节层次，小尺寸下自然消失） -->
+    <g stroke="#A9D893" stroke-opacity="0.6" stroke-width="8"
+       stroke-linecap="round" fill="none">
+      <path d="M 514 520 C 534 468 578 430 638 408"/>
+      <path d="M 510 564 C 462 552 418 508 400 456"/>
+    </g>
+  </g>
+</svg>
