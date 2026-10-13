@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Widget 库专用图标。
+  与 App 图标（Icon/icon-source.svg）的区别：
+   1. 满幅无圆角 —— widget 库图标不像 App 图标那样套squircle，系统自己裁切
+   2. 内容放大 —— 库列表里显示尺寸很小（~40pt），环与芽要更粗更满才认得出
+-->
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="bg" x1="0.15" y1="0" x2="0.55" y2="1">
+      <stop offset="0%"   stop-color="#93E05C"/>
+      <stop offset="40%"  stop-color="#58BA3C"/>
+      <stop offset="100%" stop-color="#28682F"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="0.28" cy="0.2" r="0.78">
+      <stop offset="0%"   stop-color="#FFFFFF" stop-opacity="0.26"/>
+      <stop offset="55%"  stop-color="#FFFFFF" stop-opacity="0.05"/>
+      <stop offset="100%" stop-color="#FFFFFF" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="ring" x1="0.18" y1="0.06" x2="0.82" y2="0.94">
+      <stop offset="0%"   stop-color="#FFB863"/>
+      <stop offset="50%"  stop-color="#FF8C42"/>
+      <stop offset="100%" stop-color="#EE6420"/>
+    </linearGradient>
+    <linearGradient id="sprout" x1="0.3" y1="0.05" x2="0.7" y2="1">
+      <stop offset="0%"   stop-color="#FFFFFF"/>
+      <stop offset="100%" stop-color="#E4F4D8"/>
+    </linearGradient>
+  </defs>
+
+  <!-- 满幅背景 -->
+  <rect x="0" y="0" width="1024" height="1024" fill="url(#bg)"/>
+  <rect x="0" y="0" width="1024" height="1024" fill="url(#glow)"/>
+
+  <!-- 倒计时进度环：缺口在右上 45°，半径 300、描边 145（小尺寸要更粗更满才认得出） -->
+  <path d="M 641.9 253.5 A 300 300 0 1 0 722.1 406.6"
+        transform="translate(0,14)"
+        fill="none" stroke="#154A1C" stroke-opacity="0.32"
+        stroke-width="145" stroke-linecap="round"/>
+  <path d="M 641.9 253.5 A 300 300 0 1 0 722.1 406.6"
+        fill="none" stroke="url(#ring)"
+        stroke-width="145" stroke-linecap="round"/>
+
+  <!-- 中央幼苗：整体放大填满内圈 -->
+  <g fill="url(#sprout)">
+    <rect x="466" y="330" width="92" height="368" rx="46"/>
+    <path d="M 512 508 C 512 382 602 284 762 300 C 750 458 666 536 512 508 Z"/>
+    <path d="M 512 578 C 396 576 296 494 286 354 C 412 342 504 422 512 578 Z"/>
+  </g>
+</svg>
