@@ -121,6 +121,7 @@ struct ContentView: View {
     @State private var saveFailed: Bool = false
     @State private var diagLines: [String] = []
     @State private var diagExpanded: Bool = false
+    @State private var clearReadyConfirm: Bool = false
 
     private var selectedPreset: CropPreset? {
         presets.first { $0.id == selectedPresetID }
@@ -171,163 +172,13 @@ struct ContentView: View {
 
     var body: some View {
         NavigationStack {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 24) {
-                    // 1. 选择蔬菜（玻璃卡片横滑）
-                    sectionHeader("选择蔬菜")
-                    ScrollView(.horizontal, showsIndicators: false) {
-                        GlassEffectContainer(spacing: 14) {
-                            HStack(spacing: 14) {
-                                ForEach(presets) { preset in
-                                    VegetableChip(preset: preset, selected: selectedPresetID == preset.id) {
-                                        selectedPresetID = preset.id
-                                        hoursText = "\(preset.minutes / 60)"
-                                        minutesText = "\(preset.minutes % 60)"
-                                        harvestDate = Date().addingTimeInterval(TimeInterval(preset.minutes * 60))
-                                    }
-                                }
-                                Button { showAddCrop = true } label: {
-                                    VStack(spacing: 8) {
-                                        Image(systemName: "plus")
-                                            .font(.title).foregroundStyle(.tint)
-                                        Text("自定义").font(.caption)
-                                    }
-                                    .frame(width: 96, height: 96)
-                                }
-                                .buttonStyle(.plain)
-                                .glassEffect(in: RoundedRectangle(cornerRadius: 18, style: .continuous))
-                                .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous)
-                                    .strokeBorder(Color.primary.opacity(0.06), lineWidth: 1))
-                            }
-                            .padding(.vertical, 6)
-                        }
-                        .padding(.horizontal, 4)
-                    }
-
-                    // 2. 种植参数（玻璃面板）
-                    sectionHeader("种植参数")
-                    GlassPanel {
-                        VStack(alignment: .leading, spacing: 18) {
-                            Picker("录入方式", selection: $inputMode) {
-                                ForEach(InputMode.allCases) { Text($0.rawValue).tag($0) }
-                            }
-                            .pickerStyle(.segmented)
-                            .labelsHidden()
-
-                            LabeledField("成熟时长") {
-                                HStack(spacing: 8) {
-                                    TextField("0", text: $hoursText)
-                                        .textFieldStyle(.roundedBorder)
-                                        .frame(width: 70)
-                                        .multilineTextAlignment(.trailing)
-                                    Text("小时").font(.subheadline).foregroundStyle(.secondary)
-                                    TextField("30", text: $minutesText)
-                                        .textFieldStyle(.roundedBorder)
-                                        .frame(width: 70)
-                                        .multilineTextAlignment(.trailing)
-                                    Text("分钟").font(.subheadline).foregroundStyle(.secondary)
-                                    if totalMinutes > 0 {
-                                        Text("共 \(formatDurationText(totalMinutes))")
-                                            .font(.caption).foregroundStyle(.secondary)
-                                    }
-                                }
-                            }
-                            .opacity(inputMode == .minutes ? 1 : 0.35)
-                            .disabled(inputMode != .minutes)
-
-                            LabeledField("收菜时间") {
-                                DatePicker("", selection: $harvestDate,
-                                          displayedComponents: [.date, .hourAndMinute])
-                                    .labelsHidden()
-                            }
-                            .opacity(inputMode == .absolute ? 1 : 0.35)
-                            .disabled(inputMode != .absolute)
-
-                            if let p = previewHarvest {
-                                Label("收菜时间 \(formatPreviewText(p))", systemImage: "arrow.forward")
-                                    .font(.caption)
-                                    .foregroundStyle(.tint)
-                                    .padding(.leading, 122)
-                            }
-
-                            LabeledField("备注说明") {
-                                TextEditor(text: $noteText)
-                                    .font(.body)
-                                    .scrollContentBackground(.hidden)
-                                    .padding(6)
-                                    .frame(width: 300, height: 64)
-                                    .background(Color.primary.opacity(0.06),
-                                                in: RoundedRectangle(cornerRadius: 6))
-                                    .overlay(RoundedRectangle(cornerRadius: 6)
-                                        .strokeBorder(Color.primary.opacity(0.12), lineWidth: 1))
-                            }
-
-                            Button { addRecord() } label: {
-                                Label("种下并记录", systemImage: "leaf.fill")
-                                    .font(.headline)
-                                    .frame(maxWidth: .infinity)
-                            }
-                            .buttonStyle(.borderedProminent)
-                            .controlSize(.large)
-                            .disabled(!canAdd)
-
-                            // 存储降级时明确告知用户，而不是让写入静默失败
-                            if saveFailed {
-                                Label("保存失败：无法写入磁盘，请检查磁盘权限后重试", systemImage: "exclamationmark.triangle.fill")
-                                    .font(.caption)
-                                    .foregroundStyle(.red)
-                            } else if !CropStore.isSharedContainerAvailable {
-                                Label("桌面组件暂不同步：当前签名无法访问共享容器，记录仅保存在本机", systemImage: "exclamationmark.triangle")
-                                    .font(.caption)
-                                    .foregroundStyle(.orange)
-                            }
-
-                            // 存储自检详情：默认收起，点标题展开（把「为什么存不进去」摊开给用户）
-                            if !diagLines.isEmpty {
-                                VStack(alignment: .leading, spacing: 6) {
-                                    Button {
-                                        withAnimation(.smooth) { diagExpanded.toggle() }
-                                    } label: {
-                                        Label("存储自检\(diagExpanded ? " ▾" : " ▸")",
-                                              systemImage: "stethoscope")
-                                            .font(.caption2)
-                                            .foregroundStyle(.secondary)
-                                    }
-                                    .buttonStyle(.plain)
-                                    if diagExpanded {
-                                        ForEach(diagLines, id: \.self) { line in
-                                            Text(line)
-                                                .font(.caption2)
-                                                .foregroundStyle(.secondary)
-                                                .textSelection(.enabled)
-                                        }
-                                    }
-                                }
-                                .padding(10)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                                .background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 10))
-                            }
-                        }
-                    }
-
-                    // 3. 收菜记录（玻璃卡片列表）
-                    sectionHeader("收菜记录（\(records.count)）")
-                    if records.isEmpty {
-                        Text("还没有记录，去上方种下第一棵菜吧～")
-                            .font(.subheadline).foregroundStyle(.secondary)
-                            .padding(.leading, 4)
-                    } else {
-                        GlassEffectContainer(spacing: 12) {
-                            VStack(spacing: 12) {
-                                ForEach(records) { r in
-                                    RecordRow(r: r, onEdit: { editTarget = r }, onDelete: { delete(r) })
-                                }
-                            }
-                        }
-                    }
-                    Spacer(minLength: 0)
-                }
-                .padding(24)
+            // 左右分栏：左侧录入、右侧收菜记录，首屏即可看到记录
+            HStack(alignment: .top, spacing: 0) {
+                inputPane
+                    .frame(minWidth: 420, idealWidth: 480, maxWidth: 560)
+                Divider()
+                recordsPane
+                    .frame(minWidth: 380)
             }
             .navigationTitle("农场收菜")
             .navigationSubtitle("桌面实时倒计时")
@@ -366,10 +217,247 @@ struct ContentView: View {
                 })
             }
         }
-        .frame(minWidth: 600, minHeight: 680)
+        .frame(minWidth: 900, minHeight: 620)
+        .confirmationDialog("清除 \(readyCount) 条已收获的记录？",
+                            isPresented: $clearReadyConfirm, titleVisibility: .visible) {
+            Button("清除", role: .destructive) { clearReadyRecords() }
+            Button("取消", role: .cancel) {}
+        } message: {
+            Text("已到收菜时间的记录将从列表中移除，此操作不可撤销。")
+        }
     }
 
     private func formatPreviewText(_ s: String) -> String { s }
+
+    // MARK: - 左栏：录入
+
+    private var inputPane: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 20) {
+                sectionHeader("选择蔬菜")
+                ScrollView(.horizontal, showsIndicators: false) {
+                    GlassEffectContainer(spacing: 14) {
+                        HStack(spacing: 14) {
+                            ForEach(presets) { preset in
+                                VegetableChip(preset: preset, selected: selectedPresetID == preset.id) {
+                                    selectedPresetID = preset.id
+                                    hoursText = "\(preset.minutes / 60)"
+                                    minutesText = "\(preset.minutes % 60)"
+                                    harvestDate = Date().addingTimeInterval(TimeInterval(preset.minutes * 60))
+                                }
+                            }
+                            Button { showAddCrop = true } label: {
+                                VStack(spacing: 8) {
+                                    Image(systemName: "plus")
+                                        .font(.title).foregroundStyle(.tint)
+                                    Text("自定义").font(.caption)
+                                }
+                                .frame(width: 96, height: 96)
+                            }
+                            .buttonStyle(.plain)
+                            .glassEffect(in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+                            .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous)
+                                .strokeBorder(Color.primary.opacity(0.06), lineWidth: 1))
+                        }
+                        .padding(.vertical, 6)
+                    }
+                    .padding(.horizontal, 4)
+                }
+
+                sectionHeader("种植参数")
+                GlassPanel {
+                    VStack(alignment: .leading, spacing: 18) {
+                        Picker("录入方式", selection: $inputMode) {
+                            ForEach(InputMode.allCases) { Text($0.rawValue).tag($0) }
+                        }
+                        .pickerStyle(.segmented)
+                        .labelsHidden()
+
+                        LabeledField("成熟时长") {
+                            HStack(spacing: 6) {
+                                TextField("0", text: $hoursText)
+                                    .textFieldStyle(.roundedBorder)
+                                    .frame(width: 56)
+                                    .multilineTextAlignment(.trailing)
+                                Text("小时").font(.caption).foregroundStyle(.secondary)
+                                TextField("30", text: $minutesText)
+                                    .textFieldStyle(.roundedBorder)
+                                    .frame(width: 56)
+                                    .multilineTextAlignment(.trailing)
+                                Text("分钟").font(.caption).foregroundStyle(.secondary)
+                                Spacer(minLength: 0)
+                                if totalMinutes > 0 {
+                                    Text("共 \(formatDurationText(totalMinutes))")
+                                        .font(.caption2).foregroundStyle(.secondary)
+                                }
+                            }
+                        }
+                        .opacity(inputMode == .minutes ? 1 : 0.35)
+                        .disabled(inputMode != .minutes)
+
+                        LabeledField("收菜时间") {
+                            DatePicker("", selection: $harvestDate,
+                                      displayedComponents: [.date, .hourAndMinute])
+                                .labelsHidden()
+                        }
+                        .opacity(inputMode == .absolute ? 1 : 0.35)
+                        .disabled(inputMode != .absolute)
+
+                        if let p = previewHarvest {
+                            Label("收菜时间 \(formatPreviewText(p))", systemImage: "arrow.forward")
+                                .font(.caption)
+                                .foregroundStyle(.tint)
+                                .padding(.leading, 122)
+                        }
+
+                        LabeledField("备注说明") {
+                            TextEditor(text: $noteText)
+                                .font(.caption)
+                                .scrollContentBackground(.hidden)
+                                .padding(5)
+                                .frame(height: 52)
+                                .background(Color.primary.opacity(0.06),
+                                            in: RoundedRectangle(cornerRadius: 6))
+                                .overlay(RoundedRectangle(cornerRadius: 6)
+                                    .strokeBorder(Color.primary.opacity(0.12), lineWidth: 1))
+                        }
+
+                        Button { addRecord() } label: {
+                            Label("种下并记录", systemImage: "leaf.fill")
+                                .font(.headline)
+                                .frame(maxWidth: .infinity)
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .controlSize(.large)
+                        .disabled(!canAdd)
+
+                        if saveFailed {
+                            Label("保存失败：无法写入磁盘，请检查磁盘权限后重试",
+                                  systemImage: "exclamationmark.triangle.fill")
+                                .font(.caption).foregroundStyle(.red)
+                        } else if !CropStore.isSharedContainerAvailable {
+                            Label("桌面组件暂不同步：当前签名无法访问共享容器，记录仅保存在本机",
+                                  systemImage: "exclamationmark.triangle")
+                                .font(.caption).foregroundStyle(.orange)
+                        }
+
+                        if !diagLines.isEmpty {
+                            VStack(alignment: .leading, spacing: 6) {
+                                Button {
+                                    withAnimation(.smooth) { diagExpanded.toggle() }
+                                } label: {
+                                    Label("存储自检\(diagExpanded ? " ▾" : " ▸")",
+                                          systemImage: "stethoscope")
+                                        .font(.caption2)
+                                        .foregroundStyle(.secondary)
+                                }
+                                .buttonStyle(.plain)
+                                if diagExpanded {
+                                    ForEach(diagLines, id: \.self) { line in
+                                        Text(line)
+                                            .font(.caption2)
+                                            .foregroundStyle(.secondary)
+                                            .textSelection(.enabled)
+                                    }
+                                }
+                            }
+                            .padding(10)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .background(Color.primary.opacity(0.05),
+                                        in: RoundedRectangle(cornerRadius: 10))
+                        }
+                    }
+                }
+                Spacer(minLength: 0)
+            }
+            .padding(20)
+        }
+    }
+
+    // MARK: - 右栏：收菜记录（首屏可见）
+
+    private var recordsPane: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            // 统计条：待收 / 已收获
+            HStack(spacing: 10) {
+                statTile(title: "待收", value: pendingCount, tint: .orange)
+                statTile(title: "可收获", value: readyCount, tint: .green)
+                statTile(title: "总计", value: records.count, tint: .accentColor)
+            }
+
+            HStack(spacing: 8) {
+                Text("收菜记录")
+                    .font(.headline)
+                Text("\(records.count)")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                Spacer()
+                if !records.isEmpty {
+                    Button {
+                        clearReadyConfirm = true
+                    } label: {
+                        Label("清除已收获", systemImage: "trash")
+                            .font(.caption)
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    .disabled(readyCount == 0)
+                    .help("移除 \(readyCount) 条已到收菜时间的记录")
+                }
+            }
+
+            if records.isEmpty {
+                VStack(spacing: 10) {
+                    Image(systemName: "carrot")
+                        .font(.system(size: 40))
+                        .foregroundStyle(.tertiary)
+                    Text("还没有记录")
+                        .font(.subheadline).foregroundStyle(.secondary)
+                    Text("在左侧选好蔬菜和时长，点「种下并记录」")
+                        .font(.caption).foregroundStyle(.tertiary)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                ScrollView {
+                    LazyVStack(spacing: 10) {
+                        ForEach(records) { r in
+                            RecordRow(r: r, onEdit: { editTarget = r }, onDelete: { delete(r) })
+                        }
+                    }
+                    .padding(.vertical, 2)
+                }
+            }
+        }
+        .padding(20)
+    }
+
+    private func statTile(title: String, value: Int, tint: Color) -> some View {
+        VStack(spacing: 2) {
+            Text("\(value)").font(.title2.bold()).foregroundStyle(tint)
+            Text(title).font(.caption2).foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 10)
+        .background(tint.opacity(0.10), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+    }
+
+    /// 已到收菜时间的记录数
+    private var readyCount: Int {
+        records.filter { $0.harvestAt <= Date() }.count
+    }
+
+    /// 尚未到收菜时间的记录数
+    private var pendingCount: Int { records.count - readyCount }
+
+    /// 清除所有已到收菜时间的记录（带确认，避免误删）
+    private func clearReadyRecords() {
+        var remain = records
+        remain.removeAll { $0.harvestAt <= Date() }
+        guard remain.count != records.count else { return }
+        CropStore.save(remain)
+        records = CropStore.load()
+        CropNotifier.reschedule(records)
+    }
 
     private func sectionHeader(_ title: String) -> some View {
         Text(title)
@@ -440,50 +528,76 @@ struct VegetableChip: View {
     }
 }
 
-/// 收菜记录行（玻璃卡片）
+/// 收菜记录行（玻璃卡片，右栏窄空间下用图标按钮 + hover 显示操作）
 struct RecordRow: View {
     let r: CropRecord
     let onEdit: () -> Void
     let onDelete: () -> Void
+    @State private var hovering = false
 
     var body: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: 10) {
             Circle()
                 .fill(LinearGradient(colors: [Color(hex: r.colorHex),
                                               Color(hex: r.colorHex).opacity(0.7)],
                                      startPoint: .top, endPoint: .bottom))
-                .frame(width: 40, height: 40)
+                .frame(width: 36, height: 36)
                 .overlay(Text(String(r.name.prefix(1)))
-                    .foregroundColor(.white).font(.headline))
-            VStack(alignment: .leading, spacing: 3) {
-                Text(r.name).font(.headline)
-                HStack(spacing: 5) {
-                    Text("收菜").font(.caption2).foregroundStyle(.secondary)
+                    .foregroundColor(.white).font(.subheadline.bold()))
+            VStack(alignment: .leading, spacing: 2) {
+                Text(r.name).font(.subheadline.bold())
+                HStack(spacing: 4) {
                     Text(fmt(r.harvestAt))
-                        .font(.subheadline).bold()
-                        .foregroundColor(r.harvestAt <= Date() ? .orange : .primary)
+                        .font(.caption).monospacedDigit()
+                        .foregroundStyle(r.harvestAt <= Date() ? Color.orange : Color.secondary)
                 }
                 if let note = r.note, !note.isEmpty {
-                    Label(note, systemImage: "text.bubble")
-                        .font(.caption)
+                    Text(note)
+                        .font(.caption2)
                         .foregroundStyle(.secondary)
                         .lineLimit(2)
                 }
             }
-            Spacer()
+            Spacer(minLength: 4)
             if r.harvestAt <= Date() {
-                Text("可收获").foregroundColor(.green).font(.subheadline.bold())
+                Text("可收获")
+                    .font(.caption.bold())
+                    .foregroundStyle(.green)
+                    .padding(.horizontal, 7).padding(.vertical, 3)
+                    .background(Color.green.opacity(0.15), in: Capsule())
             } else {
-                Text(remainText(r)).font(.subheadline).monospacedDigit().foregroundStyle(.secondary)
+                Text(remainText(r))
+                    .font(.caption).monospacedDigit()
+                    .foregroundStyle(.secondary)
             }
-            Button("编辑", action: onEdit).controlSize(.small).buttonStyle(.borderless)
-            Button("删除", action: onDelete).controlSize(.small).buttonStyle(.borderless).tint(.red)
+            // 操作按钮：常态半透明，hover 时高亮，避免窄栏拥挤
+            Button(action: onEdit) {
+                Image(systemName: "pencil")
+                    .font(.system(size: 12))
+                    .frame(width: 24, height: 24)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.borderless)
+            .opacity(hovering ? 1 : 0.4)
+            .help("编辑")
+            Button(action: onDelete) {
+                Image(systemName: "trash")
+                    .font(.system(size: 12))
+                    .frame(width: 24, height: 24)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.borderless)
+            .tint(.red)
+            .opacity(hovering ? 1 : 0.4)
+            .help("删除")
         }
-        .padding(14)
+        .padding(12)
         .glassEffect(in: RoundedRectangle(cornerRadius: 16, style: .continuous))
         .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous)
             .strokeBorder(Color.primary.opacity(0.07), lineWidth: 1))
         .shadow(color: .black.opacity(0.05), radius: 6, y: 2)
+        .onHover { hovering = $0 }
+        .animation(.easeOut(duration: 0.15), value: hovering)
     }
 }
 
