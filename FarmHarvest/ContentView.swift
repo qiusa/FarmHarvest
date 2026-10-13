@@ -579,6 +579,8 @@ struct ContentView: View {
                                     .strokeBorder(Color.primary.opacity(0.12), lineWidth: 1))
                         }
 
+                        NotePresetBar(noteText: $noteText)
+
                         Button { addRecord() } label: {
                             Label("种下并记录", systemImage: "leaf.fill")
                                 .font(.headline)
@@ -1141,6 +1143,8 @@ struct EditRecordSheet: View {
                                     .overlay(RoundedRectangle(cornerRadius: 6)
                                         .strokeBorder(Color.primary.opacity(0.12), lineWidth: 1))
                             }
+
+                            NotePresetBar(noteText: $noteText)
                         }
                     }
 
@@ -1483,6 +1487,147 @@ struct EditRecordSheet: View {
 }
 
 // （旧 AddCropSheet 已移除，新实现见 CropManagerSheet.swift）
+
+/// 备注说明的预选标签栏：点标签可多选填入，再次点击取消，自动去重。
+/// 两类预选值各占一行：第一行「种子」、第二行「树苗」。
+/// 内部以「、」作为选中项的分隔符，noteText 同时仍是自由文本（可手写）。
+struct NotePresetBar: View {
+    @Binding var noteText: String
+
+    /// 种子预选值（第一行）
+    private static let seedPresets = [
+        "甘薯种子", "番茄种子", "白菜种子", "酸模种子", "大豆种子", "南瓜种子",
+        "茄子种子", "千穗谷种子", "小麦种子", "绿豆种子", "西瓜种子", "辣椒种子",
+        "雪绯花种子", "大麦种子", "红豆种子", "豆薯种子", "枸杞种子", "甘蓝种子",
+        "山菊种子", "蚕豆种子", "冬瓜种子", "土豆种子", "青桑种子", "燕麦种子", "豌豆种子"
+    ]
+
+    /// 树苗预选值（第二行）
+    private static let seedlingPresets = [
+        "乌木树苗", "金丝楠树苗", "黄花梨树苗", "小叶紫檀树苗", "奇楠沉香树苗",
+        "枣树苗", "桃树苗", "黄杨树苗", "桑树苗", "麻梨树苗", "鸡翅树苗",
+        "黄檀树苗", "大红酸枝苗", "老山檀树苗", "崖柏树苗"
+    ]
+
+    /// 当前已选中的 token 集合（按「、」切分）
+    private var selectedTokens: Set<String> {
+        Set(noteText.split(separator: "、")
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty })
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            presetRow(Self.seedPresets, label: "种子")
+            presetRow(Self.seedlingPresets, label: "树苗")
+            Text("点击标签多选填入，再次点击取消（自动去重）")
+                .font(.caption2)
+                .foregroundStyle(.tertiary)
+        }
+    }
+
+    private func presetRow(_ presets: [String], label: String) -> some View {
+        HStack(alignment: .top, spacing: 8) {
+            Text(label)
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+                .frame(width: 28, alignment: .leading)
+                .padding(.top, 5)
+            FlowLayout(spacing: 6) {
+                ForEach(presets, id: \.self) { p in
+                    chip(p)
+                }
+            }
+        }
+    }
+
+    private func chip(_ preset: String) -> some View {
+        let on = selectedTokens.contains(preset)
+        return Button {
+            withAnimation(.smooth(duration: 0.15)) { toggle(preset) }
+        } label: {
+            Text(preset)
+                .font(.caption2)
+                .padding(.horizontal, 8).padding(.vertical, 4)
+                .background(on ? Color.accentColor.opacity(0.18)
+                            : Color.primary.opacity(0.06),
+                            in: RoundedRectangle(cornerRadius: 7, style: .continuous))
+                .overlay(RoundedRectangle(cornerRadius: 7, style: .continuous)
+                    .strokeBorder(on ? Color.accentColor : Color.primary.opacity(0.12),
+                                  lineWidth: 1))
+                .foregroundStyle(on ? Color.accentColor : .primary)
+        }
+        .buttonStyle(.plain)
+        .accessibilityAddTraits(on ? .isSelected : [])
+    }
+
+    /// 切换某个预选值：未选则追加，已选则移除，结果以「、」拼接（天然去重）
+    private func toggle(_ preset: String) {
+        var arr = noteText.split(separator: "、")
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
+        if let idx = arr.firstIndex(of: preset) {
+            arr.remove(at: idx)
+        } else {
+            arr.append(preset)
+        }
+        noteText = arr.joined(separator: "、")
+    }
+}
+
+/// 简单的流式布局：子视图按行自动换行（SwiftUI 原生无 flow 容器）。
+/// 用于备注预选标签在有限宽度内折行展示。
+struct FlowLayout: Layout {
+    var spacing: CGFloat = 6
+
+    func sizeThatFits(proposal: ProposedViewSize,
+                      subviews: Subviews,
+                      cache: inout ()) -> CGSize {
+        guard let maxWidth = proposal.width, maxWidth > 0 else {
+            return subviews.map { $0.sizeThatFits(.unspecified) }
+                .reduce(CGSize.zero) { CGSize(width: max($0.width, $1.width),
+                                              height: $0.height + $1.height + spacing) }
+        }
+        var x: CGFloat = 0
+        var rowHeight: CGFloat = 0
+        var totalHeight: CGFloat = 0
+        var totalWidth: CGFloat = 0
+        for sub in subviews {
+            let size = sub.sizeThatFits(.unspecified)
+            if x + size.width > maxWidth, x > 0 {
+                totalHeight += rowHeight + spacing
+                totalWidth = max(totalWidth, x - spacing)
+                x = 0
+                rowHeight = 0
+            }
+            x += size.width + spacing
+            rowHeight = max(rowHeight, size.height)
+        }
+        totalHeight += rowHeight
+        totalWidth = max(totalWidth, x - spacing)
+        return CGSize(width: totalWidth, height: totalHeight)
+    }
+
+    func placeSubviews(in bounds: CGRect,
+                       proposal: ProposedViewSize,
+                       subviews: Subviews,
+                       cache: inout ()) {
+        var x = bounds.minX
+        var y = bounds.minY
+        var rowHeight: CGFloat = 0
+        for sub in subviews {
+            let size = sub.sizeThatFits(.unspecified)
+            if x + size.width > bounds.maxX, x > bounds.minX {
+                y += rowHeight + spacing
+                x = bounds.minX
+                rowHeight = 0
+            }
+            sub.place(at: CGPoint(x: x, y: y), proposal: .unspecified)
+            x += size.width + spacing
+            rowHeight = max(rowHeight, size.height)
+        }
+    }
+}
 
 
 #Preview {
