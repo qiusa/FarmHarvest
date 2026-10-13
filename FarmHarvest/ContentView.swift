@@ -396,7 +396,7 @@ struct ContentView: View {
 
     // MARK: - 左栏：录入
 
-    /// 收起态的左栏：只留一条窄边（展开按钮 + 关键统计 + 快速录入），
+    /// 收起态的左栏：只留一条窄边（展开 / 统计 / 快速录入 / 自定义入口），
     /// 不做成完全空白，否则左半屏空着反而浪费。
     private var collapsedPane: some View {
         VStack(spacing: 14) {
@@ -422,23 +422,41 @@ struct ContentView: View {
             }
             .padding(.top, 6)
 
-            // 「种下并记录」是最高频操作，收起后不该消失——
-            // 用当前选中的蔬菜和已填时长直接记一条，省得展开再点。
-            Button {
-                addRecord()
-            } label: {
-                Image(systemName: "plus")
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundStyle(.white)
-                    .frame(width: 34, height: 34)
-                    .background(Color.accentColor, in: Circle())
+            // 快捷入口组：快速记录 + 自定义（蔬菜管理 / 导入导出）
+            VStack(spacing: 10) {
+                // 「种下并记录」是最高频操作，收起后不该消失——
+                // 用当前选中的蔬菜和已填时长直接记一条，省得展开再点。
+                Button {
+                    addRecord()
+                } label: {
+                    Image(systemName: "plus")
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundStyle(.white)
+                        .frame(width: 34, height: 34)
+                        .background(Color.accentColor, in: Circle())
+                }
+                .buttonStyle(.plain)
+                .disabled(!canAdd)
+                .opacity(canAdd ? 1 : 0.35)
+                .help(canAdd
+                      ? "种下「\(selectedPreset?.name ?? "")」并记录"
+                      : "请先选蔬菜并填写时长（需展开面板）")
+
+                // 自定义蔬菜 / 管理 / 导入导出备份。
+                // 展开态这个入口在「选择蔬菜」标题行，收起后不能跟着消失。
+                Button {
+                    showAddCrop = true
+                } label: {
+                    Image(systemName: "slider.horizontal.3")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                        .frame(width: 34, height: 34)
+                        .background(Color.primary.opacity(0.07),
+                                    in: Circle())
+                }
+                .buttonStyle(.plain)
+                .help("自定义蔬菜 / 管理已有蔬菜 / 导入导出备份")
             }
-            .buttonStyle(.plain)
-            .disabled(!canAdd)
-            .opacity(canAdd ? 1 : 0.35)
-            .help(canAdd
-                  ? "种下「\(selectedPreset?.name ?? "")」并记录"
-                  : "请先选蔬菜并填写时长（需展开面板）")
 
             Spacer(minLength: 0)
         }
@@ -993,12 +1011,21 @@ struct EditRecordSheet: View {
     let onSave: (CropRecord) -> Void
     @Environment(\.dismiss) private var dismiss
 
-    /// 新增一茬时的录入方式。「在上一茬之后」以现有最晚一茬为基准，
-    /// 「每隔两天再续一次」只需填间隔，不用每次心算绝对日期。
+    /// 新增一茬时的录入方式。
+    /// - afterLast：以现有最晚一茬为基准，「每隔两天再续一次」只需填间隔
+    /// - fromNow：**从当前时刻起算**，不受上一茬时间影响。
+    ///   续期场景常用：第一茬今天收完了，现在重新种一棵，N 小时后再收。
+    ///   跟 afterLast 的区别在基准不同——上一茬可能是好几天前，
+    ///   afterLast 会算出已经过去的时间，fromNow 才是「从现在起」。
+    /// - absoluteDate：直接挑绝对日期时间
     enum NewMode: String, CaseIterable, Identifiable {
         case afterLast = "在上一茬之后"
-        case absoluteDate = "按指定收菜时间"
+        case fromNow = "从当前起算"
+        case absoluteDate = "按指定时间"
         var id: String { rawValue }
+
+        /// 是否需要填「小时 + 分钟」（绝对日期模式用DatePicker）
+        var usesDuration: Bool { self != .absoluteDate }
     }
 
     @State private var nameText: String
@@ -1037,9 +1064,37 @@ struct EditRecordSheet: View {
     }
 
     private var previewNewDate: Date {
-        newMode == .afterLast
-            ? lastHarvestDate.addingTimeInterval(TimeInterval(newTotalMinutes * 60))
-            : newDate
+        switch newMode {
+        case .afterLast:
+            return lastHarvestDate.addingTimeInterval(TimeInterval(newTotalMinutes * 60))
+        case .fromNow:
+            return Date().addingTimeInterval(TimeInterval(newTotalMinutes * 60))
+        case .absoluteDate:
+            return newDate
+        }
+    }
+
+    /// 说明当前模式下的基准是什么，避免用户算错
+    private var newModeHint: String? {
+        switch newMode {
+        case .afterLast:
+            return "以上一茬 \(fmt(lastHarvestDate)) 为基准"
+        case .fromNow:
+            return "从现在（\(fmt(Date()))）起算"
+        case .absoluteDate:
+            return nil
+        }
+    }
+
+    /// 「添加」按钮的可用性：算出来的时间必须晚于现在。
+    /// 否则会往列表里塞一个已经过期的茬，界面上立刻变成「可收」，没意义。
+    private var canAddCycle: Bool {
+        switch newMode {
+        case .afterLast, .fromNow:
+            return newTotalMinutes > 0
+        case .absoluteDate:
+            return newDate > Date()
+        }
     }
 
     /// 至少要留一茬，否则这条记录没有意义
@@ -1172,10 +1227,11 @@ struct EditRecordSheet: View {
                     }
                     .labelsHidden()
                     .pickerStyle(.segmented)
-                    .frame(maxWidth: 320)
+                    .frame(maxWidth: 420)
 
                     HStack(spacing: 8) {
-                        if newMode == .afterLast {
+                        // afterLast 和 fromNow 都是「填间隔」，只是基准不同
+                        if newMode.usesDuration {
                             TextField("0", text: $newHoursText)
                                 .textFieldStyle(.roundedBorder)
                                 .frame(width: 66)
@@ -1201,6 +1257,14 @@ struct EditRecordSheet: View {
                         }
                         .buttonStyle(.bordered)
                         .controlSize(.small)
+                        .disabled(!canAddCycle)
+                    }
+
+                    // 说明当前 tab 从哪算起 —— afterLast 和 fromNow 基准不同，
+                    // 不写清楚用户会以为「在上一茬之后」=「现在」
+                    if let hint = newModeHint {
+                        Text(hint)
+                            .font(.caption2).foregroundStyle(.tertiary)
                     }
                 }
             }
