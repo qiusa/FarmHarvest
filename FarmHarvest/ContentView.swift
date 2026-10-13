@@ -107,6 +107,9 @@ struct GlassPanel<Content: View>: View {
 
 struct ContentView: View {
     @State private var records: [CropRecord] = CropStore.load()
+    // 必须缓存成 @State：CropStore.presets 是计算属性，改动文件后 SwiftUI 不会
+    // 自行感知，弹窗关闭时需主动刷新，否则主界面蔬菜列表不会同步。
+    @State private var presets: [CropPreset] = CropStore.presets
     @State private var selectedPresetID: String = CropStore.presets.first?.id ?? ""
     @State private var hoursText: String = "0"
     @State private var minutesText: String = ""
@@ -120,7 +123,27 @@ struct ContentView: View {
     @State private var diagExpanded: Bool = false
 
     private var selectedPreset: CropPreset? {
-        CropStore.presets.first { $0.id == selectedPresetID }
+        presets.first { $0.id == selectedPresetID }
+    }
+
+    /// 刷新蔬菜列表；若当前选中项已被删除，自动切到第一个可用蔬菜
+    private func reloadPresets() {
+        let latest = CropStore.presets
+        presets = latest
+        if !latest.contains(where: { $0.id == selectedPresetID }) {
+            if let first = latest.first {
+                selectedPresetID = first.id
+                hoursText = "\(first.minutes / 60)"
+                minutesText = "\(first.minutes % 60)"
+                harvestDate = Date().addingTimeInterval(TimeInterval(first.minutes * 60))
+            } else {
+                selectedPresetID = ""
+            }
+        } else if let cur = latest.first(where: { $0.id == selectedPresetID }) {
+            // 选中的蔬菜可能被改了名字/时长，同步刷新「成熟时长」输入框
+            hoursText = "\(cur.minutes / 60)"
+            minutesText = "\(cur.minutes % 60)"
+        }
     }
 
     /// 小时 + 分钟 折算的总分钟数（非法输入按 0 处理）
@@ -155,7 +178,7 @@ struct ContentView: View {
                     ScrollView(.horizontal, showsIndicators: false) {
                         GlassEffectContainer(spacing: 14) {
                             HStack(spacing: 14) {
-                                ForEach(CropStore.presets) { preset in
+                                ForEach(presets) { preset in
                                     VegetableChip(preset: preset, selected: selectedPresetID == preset.id) {
                                         selectedPresetID = preset.id
                                         hoursText = "\(preset.minutes / 60)"
@@ -228,10 +251,15 @@ struct ContentView: View {
                             }
 
                             LabeledField("备注说明") {
-                                TextField("可选，例如：阳台第二盆", text: $noteText, axis: .vertical)
-                                    .textFieldStyle(.roundedBorder)
-                                    .lineLimit(1...3)
-                                    .frame(width: 300)
+                                TextEditor(text: $noteText)
+                                    .font(.body)
+                                    .scrollContentBackground(.hidden)
+                                    .padding(6)
+                                    .frame(width: 300, height: 64)
+                                    .background(Color.primary.opacity(0.06),
+                                                in: RoundedRectangle(cornerRadius: 6))
+                                    .overlay(RoundedRectangle(cornerRadius: 6)
+                                        .strokeBorder(Color.primary.opacity(0.12), lineWidth: 1))
                             }
 
                             Button { addRecord() } label: {
@@ -310,7 +338,8 @@ struct ContentView: View {
                 CropNotifier.reschedule(records)
                 diagLines = CropStore.diagnoseEnvironment()
                 CropStore.reloadWidget()
-                if minutesText.isEmpty, let m = CropStore.presets.first?.minutes {
+                reloadPresets()
+                if minutesText.isEmpty, let m = presets.first?.minutes {
                     hoursText = "\(m / 60)"
                     minutesText = "\(m % 60)"
                 }
@@ -323,11 +352,16 @@ struct ContentView: View {
                     editTarget = nil
                 }
             }
-            .sheet(isPresented: $showAddCrop) {
+            .sheet(isPresented: $showAddCrop, onDismiss: {
+                // 弹窗内可能新增 / 删除 / 修改蔬菜，关闭时统一刷新主界面列表
+                reloadPresets()
+            }) {
                 AddCropSheet(onAdded: { c in
+                    reloadPresets()
                     selectedPresetID = c.id
                     hoursText = "\(c.minutes / 60)"
                     minutesText = "\(c.minutes % 60)"
+                    harvestDate = Date().addingTimeInterval(TimeInterval(c.minutes * 60))
                     showAddCrop = false
                 })
             }
@@ -491,10 +525,8 @@ struct EditRecordSheet: View {
         return h * 60 + m
     }
 
-    private var valid: Bool {
-        if mode == .add { return addTotalMinutes > 0 }
-        return true
-    }
+    /// 保存校验：允许时长为 0（0 表示保持原收菜时间不变，仅改名称/备注）
+    private var valid: Bool { true }
 
     private var previewNewHarvest: String? {
         guard addTotalMinutes > 0 else { return nil }
@@ -530,10 +562,16 @@ struct EditRecordSheet: View {
                         }
 
                         LabeledField("备注说明") {
-                            TextField("可选，例如：阳台第二盆", text: $noteText, axis: .vertical)
-                                .textFieldStyle(.roundedBorder)
-                                .lineLimit(1...3)
-                                .frame(width: 300)
+                            // TextEditor 才支持真正多行输入（TextField axis:.vertical 在 macOS 上不会换行）
+                            TextEditor(text: $noteText)
+                                .font(.body)
+                                .scrollContentBackground(.hidden)
+                                .padding(6)
+                                .frame(width: 300, height: 64)
+                                .background(Color.primary.opacity(0.06),
+                                            in: RoundedRectangle(cornerRadius: 6))
+                                .overlay(RoundedRectangle(cornerRadius: 6)
+                                    .strokeBorder(Color.primary.opacity(0.12), lineWidth: 1))
                         }
 
                         VStack(alignment: .leading, spacing: 8) {
@@ -562,6 +600,9 @@ struct EditRecordSheet: View {
                                     if addTotalMinutes > 0 {
                                         Text("共 \(formatDurationText(addTotalMinutes))")
                                             .font(.caption).foregroundStyle(.secondary)
+                                    } else {
+                                        Text("0 表示不改动收菜时间")
+                                            .font(.caption).foregroundStyle(.tertiary)
                                     }
                                 }
                             }
@@ -598,9 +639,13 @@ struct EditRecordSheet: View {
 
     private func save() {
         let harvestAt: Date
-        if mode == .add, addTotalMinutes > 0 {
-            harvestAt = record.harvestAt.addingTimeInterval(TimeInterval(addTotalMinutes * 60))
-        } else {
+        switch mode {
+        case .add:
+            // 新增时长为 0 表示「保持原收菜时间不变」，只改名称/备注
+            harvestAt = addTotalMinutes > 0
+                ? record.harvestAt.addingTimeInterval(TimeInterval(addTotalMinutes * 60))
+                : record.harvestAt
+        case .absolute:
             harvestAt = harvestDate
         }
         let trimmedNote = noteText.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -619,96 +664,8 @@ struct EditRecordSheet: View {
     }
 }
 
-/// 自定义蔬菜：玻璃面板布局，输入名字 + 选颜色；列出已自定义蔬菜可点按删除
-struct AddCropSheet: View {
-    let onAdded: (CropPreset) -> Void
-    @Environment(\.dismiss) private var dismiss
-    @State private var name: String = ""
-    @State private var colorHex: String = CropStore.cropPalette[0]
-    @State private var custom: [CropPreset] = CropStore.customCrops()
+// （旧 AddCropSheet 已移除，新实现见 CropManagerSheet.swift）
 
-    var body: some View {
-        NavigationStack {
-            VStack(alignment: .leading, spacing: 20) {
-                GlassPanel {
-                    VStack(alignment: .leading, spacing: 18) {
-                        LabeledField("蔬菜名字") {
-                            TextField("例如 菠菜", text: $name)
-                                .textFieldStyle(.roundedBorder)
-                                .frame(width: 220)
-                        }
-
-                        VStack(alignment: .leading, spacing: 10) {
-                            Text("颜色")
-                                .font(.subheadline).foregroundStyle(.secondary)
-                                .padding(.leading, 122)
-                            HStack(spacing: 10) {
-                                ForEach(CropStore.cropPalette, id: \.self) { hex in
-                                    Circle()
-                                        .fill(Color(hex: hex))
-                                        .frame(width: 28, height: 28)
-                                        .overlay(Circle().stroke(colorHex == hex ? Color.accentColor : .clear, lineWidth: 3))
-                                        .overlay(Circle().stroke(.white.opacity(0.25), lineWidth: 1))
-                                        .onTapGesture { colorHex = hex }
-                                }
-                            }
-                            .padding(.leading, 122)
-                        }
-
-                        Button { add() } label: {
-                            Text("添加").font(.headline).frame(maxWidth: .infinity)
-                        }
-                        .buttonStyle(.borderedProminent)
-                        .controlSize(.large)
-                        .disabled(name.trimmingCharacters(in: .whitespaces).isEmpty)
-                    }
-                }
-
-                if !custom.isEmpty {
-                    Text("已自定义（点按删除）")
-                        .font(.subheadline).foregroundStyle(.secondary)
-                        .padding(.leading, 4)
-                    GlassEffectContainer(spacing: 10) {
-                        ForEach(custom) { c in
-                            HStack(spacing: 12) {
-                                Circle().fill(Color(hex: c.colorHex)).frame(width: 24, height: 24)
-                                Text(c.name).font(.subheadline)
-                                Spacer()
-                                Image(systemName: "trash").foregroundStyle(.secondary)
-                            }
-                            .padding(.horizontal, 16).padding(.vertical, 12)
-                            .glassEffect(in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-                            .contentShape(Rectangle())
-                            .onTapGesture {
-                                CropStore.removeCustomCrop(id: c.id)
-                                custom = CropStore.customCrops()
-                            }
-                        }
-                    }
-                }
-
-                Spacer(minLength: 0)
-            }
-            .padding(24)
-            .frame(minWidth: 500, minHeight: 380, alignment: .topLeading)
-            .navigationTitle("自定义蔬菜")
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("完成") { dismiss() }
-                }
-            }
-        }
-    }
-
-    private func add() {
-        let n = name.trimmingCharacters(in: .whitespaces)
-        guard !n.isEmpty else { return }
-        let c = CropStore.addCustomCrop(name: n, colorHex: colorHex)
-        custom = CropStore.customCrops()
-        name = ""
-        onAdded(c)
-    }
-}
 
 #Preview {
     ContentView()

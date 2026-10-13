@@ -95,6 +95,7 @@ enum CropStore {
 
     private static var recordsURL: URL { storageRoot.appendingPathComponent("records.json") }
     private static var customCropsURL: URL { storageRoot.appendingPathComponent("customCrops.json") }
+    private static var hiddenBuiltinsURL: URL { storageRoot.appendingPathComponent("hiddenBuiltins.json") }
 
     private static let builtinPresets: [CropPreset] = [
         CropPreset(id: "carrot", name: "胡萝卜", colorHex: "FF8C42", minutes: 20),
@@ -105,9 +106,30 @@ enum CropStore {
         CropPreset(id: "strawberry", name: "草莓", colorHex: "F06595", minutes: 45),
     ]
 
-    /// 预设 + 用户自定义蔬菜（自定义持久化于 App Group，主 App 与 Widget 共享）
+    /// 内置蔬菜定义（供管理界面展示）
+    static var builtinCrops: [CropPreset] { builtinPresets }
+
+    /// 被用户删除掉的内置蔬菜 id（持久化，实现「默认蔬菜也能删除」）
+    private static var hiddenBuiltinIDs: Set<String> {
+        guard let data = try? Data(contentsOf: hiddenBuiltinsURL) else { return [] }
+        return Set((try? JSONDecoder().decode([String].self, from: data)) ?? [])
+    }
+
+    private static func saveHiddenBuiltinIDs(_ ids: Set<String>) {
+        let url = hiddenBuiltinsURL
+        guard let data = try? JSONEncoder().encode(Array(ids).sorted()) else { return }
+        do {
+            try data.write(to: url, options: .atomic)
+            reloadWidget()
+        } catch {
+            diag("隐藏内置蔬菜写入失败 \(url.path) -> \(error)")
+        }
+    }
+
+    /// 可选蔬菜 = 未被删除的内置 + 自定义
     static var presets: [CropPreset] {
-        builtinPresets + customCrops()
+        let hidden = hiddenBuiltinIDs
+        return builtinPresets.filter { !hidden.contains($0.id) } + customCrops()
     }
 
     static let cropPalette = ["FF8C42","7AC74F","E63946","FFD23F","C08457","F06595","9B5DE5","00BBF9","00F5D4","F15BB5"]
@@ -117,20 +139,64 @@ enum CropStore {
         return (try? JSONDecoder().decode([CropPreset].self, from: data)) ?? []
     }
 
-    /// 新增自定义蔬菜（支持自定义名字 + 颜色），返回新蔬菜
+    /// 新增自定义蔬菜（支持自定义名字 + 颜色 + 默认成熟时长），返回新蔬菜
     @discardableResult
-    static func addCustomCrop(name: String, colorHex: String? = nil) -> CropPreset {
+    static func addCustomCrop(name: String, colorHex: String? = nil, minutes: Int = 30) -> CropPreset {
         let hex = (colorHex ?? cropPalette[customCrops().count % cropPalette.count])
-        let c = CropPreset(id: UUID().uuidString, name: name, colorHex: hex, minutes: 30)
+        let c = CropPreset(id: UUID().uuidString, name: name, colorHex: hex,
+                           minutes: max(1, minutes))
         var list = customCrops()
         list.append(c)
         saveCustom(list)
         return c
     }
 
+    /// 删除自定义蔬菜
     static func removeCustomCrop(id: String) {
-        let list = customCrops().filter { $0.id != id }
-        saveCustom(list)
+        saveCustom(customCrops().filter { $0.id != id })
+    }
+
+    /// 修改自定义蔬菜（名称 / 颜色 / 默认时长）
+    static func updateCustomCrop(_ preset: CropPreset) {
+        var list = customCrops()
+        if let i = list.firstIndex(where: { $0.id == preset.id }) {
+            list[i] = preset
+            saveCustom(list)
+        }
+    }
+
+    /// 删除内置蔬菜：记入隐藏列表（不破坏内置定义，可一键恢复）
+    static func hideBuiltinCrop(id: String) {
+        var ids = hiddenBuiltinIDs
+        ids.insert(id)
+        saveHiddenBuiltinIDs(ids)
+    }
+
+    /// 恢复单个内置蔬菜
+    static func restoreBuiltinCrop(id: String) {
+        var ids = hiddenBuiltinIDs
+        ids.remove(id)
+        saveHiddenBuiltinIDs(ids)
+    }
+
+    /// 恢复全部内置蔬菜
+    static func restoreAllBuiltinCrops() {
+        saveHiddenBuiltinIDs([])
+    }
+
+    /// 当前被删除的内置蔬菜列表（管理界面展示「恢复」用）
+    static func hiddenBuiltinCrops() -> [CropPreset] {
+        let hidden = hiddenBuiltinIDs
+        return builtinPresets.filter { hidden.contains($0.id) }
+    }
+
+    /// 统一删除：自定义直接移除，内置记入隐藏列表
+    static func removeCrop(id: String) {
+        if builtinPresets.contains(where: { $0.id == id }) {
+            hideBuiltinCrop(id: id)
+        } else {
+            removeCustomCrop(id: id)
+        }
     }
 
     private static func saveCustom(_ list: [CropPreset]) {
@@ -213,6 +279,105 @@ enum CropStore {
             list[i] = updated
             save(list)
         }
+    }
+
+    // MARK: - 导入 / 导出
+
+    /// 备份文件格式（版本化，便于以后扩展）
+    struct Backup: Codable {
+        var version: Int = 1
+        var exportedAt: Date = Date()
+        var records: [CropRecord] = []
+        var customCrops: [CropPreset] = []
+        /// 被删除的内置蔬菜 id
+        var hiddenBuiltins: [String] = []
+    }
+
+    enum ImportMode {
+        /// 合并：同 id 覆盖，不同 id 追加
+        case merge
+        /// 替换：清空后完全采用备份内容
+        case replace
+    }
+
+    struct ImportSummary {
+        var recordsAdded: Int
+        var cropsAdded: Int
+        var mode: ImportMode
+    }
+
+    /// 导出全部数据为 JSON 字符串
+    static func exportBackupJSON() throws -> Data {
+        let backup = Backup(
+            records: load(),
+            customCrops: customCrops(),
+            hiddenBuiltins: Array(hiddenBuiltinIDs).sorted()
+        )
+        let enc = JSONEncoder()
+        enc.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
+        enc.dateEncodingStrategy = .iso8601
+        return try enc.encode(backup)
+    }
+
+    /// 写入到指定 URL
+    static func exportBackup(to url: URL) throws {
+        try exportBackupJSON().write(to: url, options: .atomic)
+    }
+
+    /// 从 JSON 数据导入
+    static func importBackup(from data: Data, mode: ImportMode) throws -> ImportSummary {
+        let dec = JSONDecoder()
+        dec.dateDecodingStrategy = .iso8601
+        let backup = try dec.decode(Backup.self, from: data)
+        guard backup.version <= 1 else {
+            throw NSError(domain: "FarmHarvest", code: 1, userInfo: [
+                NSLocalizedDescriptionKey: "备份版本 \(backup.version) 高于当前 App 支持的版本"
+            ])
+        }
+
+        // 合并：备份中同 id 的记录覆盖现有记录，仅追加本地没有的
+        var addedRecords: Int
+        if mode == .replace {
+            save(backup.records)
+            addedRecords = backup.records.count
+        } else {
+            var cur = load()
+            let backupIDs = Set(backup.records.map(\.id))
+            cur.removeAll { backupIDs.contains($0.id) }
+            let existAfterRemove = Set(cur.map(\.id))
+            let fresh = backup.records.filter { !existAfterRemove.contains($0.id) }
+            cur.append(contentsOf: fresh)
+            save(cur)
+            addedRecords = backup.records.count
+        }
+
+        var addedCrops: Int
+        if mode == .replace {
+            saveCustom(backup.customCrops)
+            saveHiddenBuiltinIDs(Set(backup.hiddenBuiltins))
+            addedCrops = backup.customCrops.count
+        } else {
+            var cur = customCrops()
+            let backupIDs = Set(backup.customCrops.map(\.id))
+            cur.removeAll { backupIDs.contains($0.id) }
+            let existAfterRemove = Set(cur.map(\.id))
+            let fresh = backup.customCrops.filter { !existAfterRemove.contains($0.id) }
+            cur.append(contentsOf: fresh)
+            saveCustom(cur)
+            saveHiddenBuiltinIDs(hiddenBuiltinIDs.union(backup.hiddenBuiltins))
+            addedCrops = backup.customCrops.count
+        }
+
+        reloadWidget()
+        return ImportSummary(recordsAdded: addedRecords,
+                             cropsAdded: addedCrops,
+                             mode: mode)
+    }
+
+    /// 从文件导入
+    static func importBackup(from url: URL, mode: ImportMode) throws -> ImportSummary {
+        let data = try Data(contentsOf: url)
+        return try importBackup(from: data, mode: mode)
     }
 }
 
