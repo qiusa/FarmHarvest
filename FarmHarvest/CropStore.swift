@@ -7,7 +7,7 @@ import WidgetKit
 #endif
 
 /// 单条收菜记录（两种 target 共用，通过 App Group 的 UserDefaults 持久化）
-struct CropRecord: Identifiable, Codable {
+struct CropRecord: Identifiable, Codable, Equatable {
     let id: String
     let name: String
     let colorHex: String
@@ -19,7 +19,7 @@ struct CropRecord: Identifiable, Codable {
 }
 
 /// 蔬菜预设（默认成熟分钟数）
-struct CropPreset: Codable, Identifiable {
+struct CropPreset: Codable, Identifiable, Equatable {
     let id: String
     let name: String
     let colorHex: String
@@ -301,9 +301,31 @@ enum CropStore {
     }
 
     struct ImportSummary {
+        /// 备份中本地原先没有、此次新追加的记录数
         var recordsAdded: Int
+        /// 备份中与本地同 id、此次被覆盖的记录数
+        var recordsOverwritten: Int
+        /// 替换模式下等于备份里的总记录数
+        var recordsTotal: Int
         var cropsAdded: Int
+        var cropsOverwritten: Int
+        var cropsTotal: Int
         var mode: ImportMode
+
+        /// 面向用户的一句话摘要，说清真实变更量而不是笼统的「导入 N 条」
+        var text: String {
+            switch mode {
+            case .replace:
+                return "已替换：记录 \(recordsTotal) 条 · 蔬菜 \(cropsTotal) 个"
+            case .merge:
+                var parts: [String] = []
+                parts.append(recordsAdded > 0 ? "新增记录 \(recordsAdded) 条" : "无新增记录")
+                if recordsOverwritten > 0 { parts.append("覆盖 \(recordsOverwritten) 条") }
+                var c: [String] = [cropsAdded > 0 ? "新增蔬菜 \(cropsAdded) 个" : "无新增蔬菜"]
+                if cropsOverwritten > 0 { c.append("覆盖 \(cropsOverwritten) 个") }
+                return "已合并：" + parts.joined(separator: " · ") + " · " + c.joined(separator: " ")
+            }
+        }
     }
 
     /// 导出全部数据为 JSON 字符串
@@ -337,40 +359,54 @@ enum CropStore {
 
         // 合并：备份中同 id 的记录覆盖现有记录，仅追加本地没有的
         var addedRecords: Int
+        var overwrittenRecords: Int
         if mode == .replace {
             save(backup.records)
             addedRecords = backup.records.count
+            overwrittenRecords = 0
         } else {
             var cur = load()
+            // curIDs 必须是**导入前**的本地 id 全集：新增 = 备份里本地完全没有的，
+            // 覆盖 = 备份里本地已有（同 id）的。两者互斥，加起来才等于备份条数。
+            let curIDs = Set(cur.map(\.id))
             let backupIDs = Set(backup.records.map(\.id))
+            overwrittenRecords = curIDs.intersection(backupIDs).count
+            addedRecords = backupIDs.subtracting(curIDs).count
             cur.removeAll { backupIDs.contains($0.id) }
             let existAfterRemove = Set(cur.map(\.id))
             let fresh = backup.records.filter { !existAfterRemove.contains($0.id) }
             cur.append(contentsOf: fresh)
             save(cur)
-            addedRecords = backup.records.count
         }
 
         var addedCrops: Int
+        var overwrittenCrops: Int
         if mode == .replace {
             saveCustom(backup.customCrops)
             saveHiddenBuiltinIDs(Set(backup.hiddenBuiltins))
             addedCrops = backup.customCrops.count
+            overwrittenCrops = 0
         } else {
             var cur = customCrops()
+            let curIDs = Set(cur.map(\.id))
             let backupIDs = Set(backup.customCrops.map(\.id))
+            overwrittenCrops = curIDs.intersection(backupIDs).count
+            addedCrops = backupIDs.subtracting(curIDs).count
             cur.removeAll { backupIDs.contains($0.id) }
             let existAfterRemove = Set(cur.map(\.id))
             let fresh = backup.customCrops.filter { !existAfterRemove.contains($0.id) }
             cur.append(contentsOf: fresh)
             saveCustom(cur)
             saveHiddenBuiltinIDs(hiddenBuiltinIDs.union(backup.hiddenBuiltins))
-            addedCrops = backup.customCrops.count
         }
 
         reloadWidget()
         return ImportSummary(recordsAdded: addedRecords,
+                             recordsOverwritten: overwrittenRecords,
+                             recordsTotal: backup.records.count,
                              cropsAdded: addedCrops,
+                             cropsOverwritten: overwrittenCrops,
+                             cropsTotal: backup.customCrops.count,
                              mode: mode)
     }
 

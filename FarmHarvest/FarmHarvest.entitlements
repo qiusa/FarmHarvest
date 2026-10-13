@@ -8,5 +8,10 @@
 	<array>
 		<string>MWYKGVPTJP.com.yixin.farmharvest</string>
 	</array>
+	<!-- 导入 / 导出备份需要读写「用户通过面板自行选择」的文件。
+	     缺这一项时沙盒会直接拒绝 NSSavePanel / NSOpenPanel 选中的 URL，
+	     表现为点击导出/导入没有任何反应。 -->
+	<key>com.apple.security.files.user-selected.read-write</key>
+	<true/>
 </dict>
 </plist>

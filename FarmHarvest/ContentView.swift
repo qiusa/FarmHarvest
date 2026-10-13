@@ -204,8 +204,12 @@ struct ContentView: View {
                 }
             }
             .sheet(isPresented: $showAddCrop, onDismiss: {
-                // 弹窗内可能新增 / 删除 / 修改蔬菜，关闭时统一刷新主界面列表
+                // 弹窗内可能新增 / 删除 / 修改蔬菜，也可能在「数据」页导入备份，
+                // 两种情况都会改磁盘，所以蔬菜列表 + 收菜记录 + 通知都要重新读一遍。
                 reloadPresets()
+                records = CropStore.load()
+                CropNotifier.reschedule(records)
+                CropStore.reloadWidget()
             }) {
                 AddCropSheet(onAdded: { c in
                     reloadPresets()
@@ -234,7 +238,18 @@ struct ContentView: View {
     private var inputPane: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
-                sectionHeader("选择蔬菜")
+                // 「自定义 / 蔬菜管理」入口放在标题行右侧：原先它在横向滚动条末尾，
+                // 内置蔬菜一多就被挤出可视区，必须横向滚动才点得到。
+                HStack {
+                    sectionHeader("选择蔬菜")
+                    Spacer(minLength: 0)
+                    Button { showAddCrop = true } label: {
+                        Label("自定义", systemImage: "plus")
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    .help("新增自定义蔬菜 / 管理已有蔬菜 / 导入导出备份")
+                }
                 ScrollView(.horizontal, showsIndicators: false) {
                     GlassEffectContainer(spacing: 14) {
                         HStack(spacing: 14) {
@@ -246,18 +261,6 @@ struct ContentView: View {
                                     harvestDate = Date().addingTimeInterval(TimeInterval(preset.minutes * 60))
                                 }
                             }
-                            Button { showAddCrop = true } label: {
-                                VStack(spacing: 8) {
-                                    Image(systemName: "plus")
-                                        .font(.title).foregroundStyle(.tint)
-                                    Text("自定义").font(.caption)
-                                }
-                                .frame(width: 96, height: 96)
-                            }
-                            .buttonStyle(.plain)
-                            .glassEffect(in: RoundedRectangle(cornerRadius: 18, style: .continuous))
-                            .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous)
-                                .strokeBorder(Color.primary.opacity(0.06), lineWidth: 1))
                         }
                         .padding(.vertical, 6)
                     }

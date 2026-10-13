@@ -18,6 +18,8 @@ struct CropManagerSheet: View {
     @State private var presets: [CropPreset] = CropStore.presets
     @State private var hidden: [CropPreset] = CropStore.hiddenBuiltinCrops()
     @State private var builtinIDs: Set<String> = Set(CropStore.builtinCrops.map(\.id))
+    /// 收菜记录条数缓存：导入后必须刷新，否则「当前数据」显示的是旧值
+    @State private var recordCount: Int = CropStore.load().count
 
     // 新增表单
     @State private var name: String = ""
@@ -33,6 +35,13 @@ struct CropManagerSheet: View {
     @State private var toast: String?
     @State private var toastIsError: Bool = false
     @State private var importMode: CropStore.ImportMode = .merge
+
+    // 文件面板开关：交给 SwiftUI 原生 fileExporter / fileImporter 处理，
+    // 不用手动 NSSavePanel + beginSheetModal（sheet 上再挂 sheet 会被 AppKit 静默丢弃）。
+    @State private var showExporter: Bool = false
+    @State private var showImporter: Bool = false
+    /// 导出内容在点击按钮时就地生成，避免在 body 求值时反复读盘
+    @State private var exportData: Data = Data()
 
     private var formMinutes: Int {
         let h = max(0, Int(hoursText.trimmingCharacters(in: .whitespaces)) ?? 0)
@@ -96,6 +105,47 @@ struct CropManagerSheet: View {
             Text(builtinIDs.contains(pendingDelete?.id ?? "")
                  ? "内置蔬菜不会真正移除，可随时在「管理 - 已删除的内置」中恢复。"
                  : "该蔬菜将从列表中移除。")
+        }
+        .fileExporter(isPresented: $showExporter,
+                      document: BackupDocument(data: exportData),
+                      contentType: .json,
+                      defaultFilename: "FarmHarvest-备份-\(Self.stamp())") { result in
+            switch result {
+            case .success(let url):
+                show("已导出到 \(url.lastPathComponent)")
+            case .failure(let err):
+                // 用户主动取消不算错误，不打扰
+                if (err as NSError).code != NSUserCancelledError {
+                    show("导出失败：\(err.localizedDescription)", isError: true)
+                }
+            }
+        }
+        .fileImporter(isPresented: $showImporter,
+                      allowedContentTypes: [.json],
+                      allowsMultipleSelection: false) { result in
+            switch result {
+            case .success(let urls):
+                guard let url = urls.first else { return }
+                let before = CropStore.load()
+                do {
+                    let s = try CropStore.importBackup(from: url, mode: importMode)
+                    refresh()
+                    let after = CropStore.load()
+                    // 合并模式下若备份与本地完全一致，用户会以为「导入没生效」——
+                    // 这里明确说明是「内容本就相同」还是真的写入了新数据。
+                    if s.mode == .merge, before == after {
+                        show("已合并：内容与当前数据完全相同（新增 0 条 · 覆盖 \(s.recordsOverwritten) 条）")
+                    } else {
+                        show(s.text)
+                    }
+                } catch {
+                    show("导入失败：\(error.localizedDescription)", isError: true)
+                }
+            case .failure(let err):
+                if (err as NSError).code != NSUserCancelledError {
+                    show("选择文件失败：\(err.localizedDescription)", isError: true)
+                }
+            }
         }
     }
 
@@ -279,7 +329,7 @@ struct CropManagerSheet: View {
             GlassPanel {
                 VStack(alignment: .leading, spacing: 16) {
                     LabeledField("导出") {
-                        Button { doExport() } label: {
+                        Button { startExport() } label: {
                             Label("导出备份…", systemImage: "square.and.arrow.up")
                         }
                         .buttonStyle(.bordered)
@@ -299,15 +349,16 @@ struct CropManagerSheet: View {
                         .frame(width: 220)
 
                         Text(importMode == .merge
-                             ? "合并：同 id 记录被备份覆盖，新记录追加到列表末尾。"
+                             ? "合并：同 id 的记录被备份覆盖，本地没有的记录追加到末尾。若备份就是本机导出的那份，内容会完全一致、界面看不出变化。"
                              : "替换：清空当前全部记录与蔬菜，完全采用备份内容。")
                             .font(.caption).foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
 
-                        Button { doImport() } label: {
+                        Button { showImporter = true } label: {
                             Label("导入备份…", systemImage: "square.and.arrow.down")
                         }
                         .buttonStyle(.bordered)
+                        .help("从之前导出的 JSON 备份文件恢复")
                     }
                 }
             }
@@ -316,7 +367,7 @@ struct CropManagerSheet: View {
                 VStack(alignment: .leading, spacing: 8) {
                     Text("当前数据")
                         .font(.subheadline).foregroundStyle(.secondary)
-                    Text("收菜记录 \(CropStore.load().count) 条 · 蔬菜 \(presets.count) 个（内置 \(presets.count - customCount) + 自定义 \(customCount)）")
+                    Text("收菜记录 \(recordCount) 条 · 蔬菜 \(presets.count) 个（内置 \(presets.count - customCount) + 自定义 \(customCount)）")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
@@ -345,6 +396,7 @@ struct CropManagerSheet: View {
     private func refresh() {
         presets = CropStore.presets
         hidden = CropStore.hiddenBuiltinCrops()
+        recordCount = CropStore.load().count
     }
 
     private func show(_ msg: String, isError: Bool = false) {
@@ -381,77 +433,14 @@ struct CropManagerSheet: View {
         show("已删除「\(p.name)」")
     }
 
-    /// 取用于承载文件面板的宿主窗口。
-    /// sheet 刚弹出时 keyWindow 可能短暂为 nil，逐个回退直到找到可挂载的窗口。
-    private func hostWindow() -> NSWindow? {
-        if let w = NSApp.keyWindow, w.isVisible { return w }
-        if let w = NSApp.mainWindow, w.isVisible { return w }
-        return NSApp.windows.first { $0.isVisible && $0.canBecomeMain }
-    }
-
-    // 导入导出面板必须在**宿主窗口**上以子 sheet 形式呈现。
-    // 若在 SwiftUI .sheet 里直接 runModal()，面板会被外层 sheet 挡住事件循环，
-    // 表现为「点了没反应」。这里用 continuation 包装成 async 调用。
-    private func runSavePanel() async -> URL? {
-        let panel = NSSavePanel()
-        panel.nameFieldStringValue = "FarmHarvest-备份-\(Self.stamp()).json"
-        panel.allowedContentTypes = [.json]
-        panel.canCreateDirectories = true
-        panel.message = "选择备份文件的保存位置"
-        return await withCheckedContinuation { cont in
-            guard let host = hostWindow() else {
-                //拿不到宿主窗口时退回模态运行，宁可样式不统一也不要静默无反应
-                cont.resume(returning: panel.runModal() == .OK ? panel.url : nil)
-                return
-            }
-            panel.beginSheetModal(for: host) { resp in
-                cont.resume(returning: resp == .OK ? panel.url : nil)
-            }
-        }
-    }
-
-    private func runOpenPanel() async -> URL? {
-        let panel = NSOpenPanel()
-        panel.allowedContentTypes = [.json]
-        panel.allowsMultipleSelection = false
-        panel.canChooseDirectories = false
-        panel.message = "选择要导入的备份文件"
-        return await withCheckedContinuation { cont in
-            guard let host = hostWindow() else {
-                cont.resume(returning: panel.runModal() == .OK ? panel.url : nil)
-                return
-            }
-            panel.beginSheetModal(for: host) { resp in
-                cont.resume(returning: resp == .OK ? panel.url : nil)
-            }
-        }
-    }
-
-    private func doExport() {
-        Task {
-            // 等sheet 呈现动画结束再弹面板，否则可能被吞掉
-            try? await Task.sleep(for: .milliseconds(350))
-            guard let url = await runSavePanel() else { return }
-            do {
-                try CropStore.exportBackup(to: url)
-                show("已导出到 \(url.lastPathComponent)")
-            } catch {
-                show("导出失败：\(error.localizedDescription)", isError: true)
-            }
-        }
-    }
-
-    private func doImport() {
-        Task {
-            try? await Task.sleep(for: .milliseconds(350))
-            guard let url = await runOpenPanel() else { return }
-            do {
-                let s = try CropStore.importBackup(from: url, mode: importMode)
-                refresh()
-                show("已\(s.mode == .merge ? "合并" : "替换")导入：记录 \(s.recordsAdded) 条 · 蔬菜 \(s.cropsAdded) 个")
-            } catch {
-                show("导入失败：\(error.localizedDescription)", isError: true)
-            }
+    /// 生成备份内容后就绪，再让 SwiftUI 弹出原生保存面板。
+    /// 先取数据再翻开关，避免 body 求值期间读盘。
+    private func startExport() {
+        do {
+            exportData = try CropStore.exportBackupJSON()
+            showExporter = true
+        } catch {
+            show("导出失败：\(error.localizedDescription)", isError: true)
         }
     }
 
@@ -459,6 +448,22 @@ struct CropManagerSheet: View {
         let f = DateFormatter()
         f.dateFormat = "yyyyMMdd-HHmmss"
         return f.string(from: Date())
+    }
+}
+
+/// `.fileExporter` 需要的文档包装：内容就是 CropStore 产出的备份 JSON
+struct BackupDocument: FileDocument {
+    static var readableContentTypes: [UTType] { [.json] }
+    var data: Data
+
+    init(data: Data) { self.data = data }
+
+    init(configuration: ReadConfiguration) throws {
+        data = configuration.file.regularFileContents ?? Data()
+    }
+
+    func fileWrapper(configuration: WriteConfiguration) throws -> FileWrapper {
+        FileWrapper(regularFileWithContents: data)
     }
 }
 
