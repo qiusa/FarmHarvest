@@ -17,6 +17,11 @@ struct PhoneContentView: View {
     @State private var pendingDelete: CropRecord?
     @State private var editingRecord: CropRecord?
     @State private var showClearConfirmation = false
+    @State private var remoteBackupURL = CropStore.defaultRemoteBackupURLString
+    @State private var remoteImportMode: CropStore.ImportMode = .merge
+    @State private var isImportingRemoteBackup = false
+    @State private var showRemoteReplaceConfirmation = false
+    @State private var pendingRemoteImportURL: URL?
     @State private var message: String?
 
     private var selectedPreset: CropPreset? {
@@ -63,6 +68,14 @@ struct PhoneContentView: View {
             }
             .tabItem {
                 Label("记录", systemImage: "list.bullet")
+            }
+
+            NavigationStack {
+                remoteImportForm
+                    .navigationTitle("数据")
+            }
+            .tabItem {
+                Label("数据", systemImage: "arrow.down.doc")
             }
         }
         .tint(.green)
@@ -119,6 +132,22 @@ struct PhoneContentView: View {
             Button("取消", role: .cancel) {}
         } message: {
             Text("仅清除每一茬都已采收或已到收菜时间的记录；仍有未来采收时间的记录会保留。")
+        }
+        .confirmationDialog(
+            "用远程备份替换本机数据？",
+            isPresented: $showRemoteReplaceConfirmation,
+            titleVisibility: .visible
+        ) {
+            Button("下载并替换", role: .destructive) {
+                guard let url = pendingRemoteImportURL else { return }
+                pendingRemoteImportURL = nil
+                Task { await importRemoteBackup(from: url, mode: .replace) }
+            }
+            Button("取消", role: .cancel) {
+                pendingRemoteImportURL = nil
+            }
+        } message: {
+            Text("当前收菜记录、自定义蔬菜和内置蔬菜隐藏状态将被远程备份覆盖。")
         }
         .alert("提示", isPresented: Binding(
             get: { message != nil },
@@ -347,6 +376,100 @@ struct PhoneContentView: View {
         .presentationDetents([.medium, .large])
     }
 
+    private var remoteImportForm: some View {
+        Form {
+            Section("远程备份地址") {
+                TextField("HTTPS 备份地址", text: $remoteBackupURL)
+                    .keyboardType(.URL)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+
+                Text("默认填写的是电脑导出的 JSON 地址。手机和电脑都可从该地址导入。")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
+
+            Section("导入方式") {
+                Picker("方式", selection: $remoteImportMode) {
+                    Text("合并").tag(CropStore.ImportMode.merge)
+                    Text("替换").tag(CropStore.ImportMode.replace)
+                }
+                .pickerStyle(.segmented)
+
+                Text(remoteImportMode == .merge
+                     ? "同 ID 的记录和蔬菜会更新，本机没有的项目会追加；本机独有项目保留。"
+                     : "完全采用远程备份，会覆盖本机记录、自定义蔬菜和隐藏的内置蔬菜。")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+
+                Button {
+                    startRemoteImport()
+                } label: {
+                    HStack {
+                        Spacer()
+                        if isImportingRemoteBackup {
+                            ProgressView("正在下载并导入…")
+                        } else {
+                            Label("获取并导入", systemImage: "arrow.down.doc")
+                        }
+                        Spacer()
+                    }
+                }
+                .disabled(isImportingRemoteBackup)
+            }
+
+            Section {
+                Text("远程导入只会下载数据，不会把手机上的修改自动上传到该地址。")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .scrollDismissesKeyboard(.interactively)
+        .background(DismissKeyboardOnBackgroundTap())
+        .toolbar {
+            ToolbarItemGroup(placement: .keyboard) {
+                Spacer()
+                Button("收起键盘", action: dismissKeyboard)
+            }
+        }
+    }
+
+    private func startRemoteImport() {
+        guard let url = URL(string: remoteBackupURL.trimmingCharacters(in: .whitespacesAndNewlines)),
+              url.scheme?.lowercased() == "https",
+              url.host != nil else {
+            message = "请输入有效的 HTTPS 备份地址。"
+            return
+        }
+
+        if remoteImportMode == .replace {
+            pendingRemoteImportURL = url
+            showRemoteReplaceConfirmation = true
+        } else {
+            Task { await importRemoteBackup(from: url, mode: .merge) }
+        }
+    }
+
+    @MainActor
+    private func importRemoteBackup(from url: URL, mode: CropStore.ImportMode) async {
+        isImportingRemoteBackup = true
+        defer { isImportingRemoteBackup = false }
+        let before = CropStore.load()
+
+        do {
+            let summary = try await CropStore.importBackup(fromRemoteURL: url, mode: mode)
+            refresh()
+            let after = CropStore.load()
+            if mode == .merge, before == after {
+                message = "远程备份与本机记录一致（覆盖 \(summary.recordsOverwritten) 条）"
+            } else {
+                message = summary.text
+            }
+        } catch {
+            message = "远程导入失败：\(error.localizedDescription)"
+        }
+    }
+
     private func addRecord() {
         guard let preset = selectedPreset, let minutes = parsedMinutes else { return }
         let trimmedNote = note.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -545,8 +668,8 @@ private struct PhoneEditRecordSheet: View {
     @State private var note: String
     @State private var harvests: [HarvestCycle]
     @State private var newMode: NewCycleMode = .afterLast
-    @State private var hoursText = "0"
-    @State private var minutesText = "30"
+    @State private var hoursText = "1"
+    @State private var minutesText = "0"
     @State private var newDate: Date
     @State private var pendingCycleDelete: HarvestCycle?
 
@@ -685,13 +808,13 @@ private struct PhoneEditRecordSheet: View {
                         )
                     } else {
                         HStack(spacing: 8) {
-                            TextField("0", text: $hoursText)
+                            TextField("1", text: $hoursText)
                                 .keyboardType(.numberPad)
                                 .multilineTextAlignment(.trailing)
                                 .frame(maxWidth: 70)
                             Text("小时")
                                 .foregroundStyle(.secondary)
-                            TextField("30", text: $minutesText)
+                            TextField("0", text: $minutesText)
                                 .keyboardType(.numberPad)
                                 .multilineTextAlignment(.trailing)
                                 .frame(maxWidth: 70)

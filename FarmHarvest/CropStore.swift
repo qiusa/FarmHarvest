@@ -139,6 +139,8 @@ enum CropStore {
     // 关键：macOS 上必须用「TeamID 前缀」的 App Group，无需 provisioning profile；
     // 若用 group. 前缀则强制要求 profile，本机没有 → 授权失败、App 与 Widget 无法共享数据。
     static let appGroup = "MWYKGVPTJP.com.yixin.farmharvest"
+    static let defaultRemoteBackupURLString =
+        "https://qiniu.yixin.im/manage-web/manager-pulish/test-web/a.json"
 
     // 存储根目录。优先 App Group 共享容器（Widget 与主 App 才能互通）；
 // 关键：不能只看 containerURL != nil —— 容器路径存在但目录不可写（常见于
@@ -536,8 +538,63 @@ enum CropStore {
                              mode: mode)
     }
 
+    /// 从 HTTPS 地址下载并导入备份。请求跳过本机缓存，并要求上游重新验证，
+    /// 避免 CDN 长缓存让手机读到旧备份。
+    static func importBackup(fromRemoteURL url: URL, mode: ImportMode) async throws -> ImportSummary {
+        guard url.scheme?.lowercased() == "https", url.host != nil else {
+            throw NSError(domain: "FarmHarvest", code: 2, userInfo: [
+                NSLocalizedDescriptionKey: "远程备份必须使用有效的 HTTPS 地址。"
+            ])
+        }
+
+        // This Qiniu endpoint advertises a long CDN lifetime. A unique query item
+        // makes each manual refresh fetch the latest uploaded JSON instead of a
+        // cached earlier export. Leave signed URLs on other hosts untouched.
+        var requestURL = url
+        if url.host?.lowercased() == "qiniu.yixin.im",
+           var components = URLComponents(url: url, resolvingAgainstBaseURL: false) {
+            var items = components.queryItems ?? []
+            items.append(URLQueryItem(name: "_farmharvest_refresh", value: UUID().uuidString))
+            components.queryItems = items
+            requestURL = components.url ?? url
+        }
+
+        var request = URLRequest(
+            url: requestURL,
+            cachePolicy: .reloadIgnoringLocalCacheData,
+            timeoutInterval: 30
+        )
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        request.setValue("no-cache", forHTTPHeaderField: "Cache-Control")
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard let response = response as? HTTPURLResponse else {
+            throw NSError(domain: "FarmHarvest", code: 3, userInfo: [
+                NSLocalizedDescriptionKey: "远程地址没有返回有效的 HTTP 响应。"
+            ])
+        }
+        guard (200..<300).contains(response.statusCode) else {
+            throw NSError(domain: "FarmHarvest", code: response.statusCode, userInfo: [
+                NSLocalizedDescriptionKey: "远程服务器返回 HTTP \(response.statusCode)。"
+            ])
+        }
+        guard data.count <= 10 * 1024 * 1024 else {
+            throw NSError(domain: "FarmHarvest", code: 4, userInfo: [
+                NSLocalizedDescriptionKey: "备份文件超过 10 MB，已取消导入。"
+            ])
+        }
+
+        return try importBackup(from: data, mode: mode)
+    }
+
     /// 从文件导入
     static func importBackup(from url: URL, mode: ImportMode) throws -> ImportSummary {
+        let hasSecurityScopedAccess = url.startAccessingSecurityScopedResource()
+        defer {
+            if hasSecurityScopedAccess {
+                url.stopAccessingSecurityScopedResource()
+            }
+        }
         let data = try Data(contentsOf: url)
         return try importBackup(from: data, mode: mode)
     }

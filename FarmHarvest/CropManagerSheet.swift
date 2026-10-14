@@ -35,6 +35,10 @@ struct CropManagerSheet: View {
     @State private var toast: String?
     @State private var toastIsError: Bool = false
     @State private var importMode: CropStore.ImportMode = .merge
+    @State private var remoteBackupURL = CropStore.defaultRemoteBackupURLString
+    @State private var isImportingRemoteBackup = false
+    @State private var showRemoteReplaceConfirmation = false
+    @State private var pendingRemoteImportURL: URL?
 
     // 文件面板开关：交给 SwiftUI 原生 fileExporter / fileImporter 处理，
     // 不用手动 NSSavePanel + beginSheetModal（sheet 上再挂 sheet 会被 AppKit 静默丢弃）。
@@ -146,6 +150,22 @@ struct CropManagerSheet: View {
                     show("选择文件失败：\(err.localizedDescription)", isError: true)
                 }
             }
+        }
+        .confirmationDialog(
+            "用远程备份替换本机数据？",
+            isPresented: $showRemoteReplaceConfirmation,
+            titleVisibility: .visible
+        ) {
+            Button("下载并替换", role: .destructive) {
+                guard let url = pendingRemoteImportURL else { return }
+                pendingRemoteImportURL = nil
+                Task { await importRemoteBackup(from: url, mode: .replace) }
+            }
+            Button("取消", role: .cancel) {
+                pendingRemoteImportURL = nil
+            }
+        } message: {
+            Text("当前收菜记录、自定义蔬菜和内置蔬菜隐藏状态将被远程备份覆盖。")
         }
     }
 
@@ -359,6 +379,32 @@ struct CropManagerSheet: View {
                         }
                         .buttonStyle(.bordered)
                         .help("从之前导出的 JSON 备份文件恢复")
+
+                        Divider()
+                            .padding(.vertical, 4)
+
+                        Text("从远程地址导入")
+                            .font(.subheadline)
+                        Text("可填写电脑导出的备份地址，在手机或电脑上读取同一份 JSON。")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                        TextField("HTTPS 备份地址", text: $remoteBackupURL)
+                            .textFieldStyle(.roundedBorder)
+                            .disabled(isImportingRemoteBackup)
+                        Button {
+                            startRemoteImport()
+                        } label: {
+                            if isImportingRemoteBackup {
+                                ProgressView()
+                                    .controlSize(.small)
+                                    .frame(width: 120)
+                            } else {
+                                Label("从网址导入", systemImage: "arrow.down.doc")
+                            }
+                        }
+                        .buttonStyle(.bordered)
+                        .disabled(isImportingRemoteBackup)
                     }
                 }
             }
@@ -441,6 +487,42 @@ struct CropManagerSheet: View {
             showExporter = true
         } catch {
             show("导出失败：\(error.localizedDescription)", isError: true)
+        }
+    }
+
+    private func startRemoteImport() {
+        guard let url = URL(string: remoteBackupURL.trimmingCharacters(in: .whitespacesAndNewlines)),
+              url.scheme?.lowercased() == "https",
+              url.host != nil else {
+            show("请输入有效的 HTTPS 备份地址。", isError: true)
+            return
+        }
+
+        if importMode == .replace {
+            pendingRemoteImportURL = url
+            showRemoteReplaceConfirmation = true
+        } else {
+            Task { await importRemoteBackup(from: url, mode: .merge) }
+        }
+    }
+
+    @MainActor
+    private func importRemoteBackup(from url: URL, mode: CropStore.ImportMode) async {
+        isImportingRemoteBackup = true
+        defer { isImportingRemoteBackup = false }
+        let before = CropStore.load()
+
+        do {
+            let summary = try await CropStore.importBackup(fromRemoteURL: url, mode: mode)
+            refresh()
+            let after = CropStore.load()
+            if mode == .merge, before == after {
+                show("远程备份与本机记录一致（覆盖 \(summary.recordsOverwritten) 条）")
+            } else {
+                show(summary.text)
+            }
+        } catch {
+            show("远程导入失败：\(error.localizedDescription)", isError: true)
         }
     }
 

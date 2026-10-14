@@ -1013,8 +1013,8 @@ struct EditRecordSheet: View {
 
     // 新增一茬的表单
     @State private var newMode: NewMode = .afterLast
-    @State private var newHoursText: String = "0"
-    @State private var newMinutesText: String = "30"
+    @State private var newHoursText: String = "1"
+    @State private var newMinutesText: String = "0"
     @State private var newDate: Date = Date()
 
     init(record: CropRecord, onSave: @escaping (CropRecord) -> Void) {
@@ -1209,12 +1209,12 @@ struct EditRecordSheet: View {
                     HStack(spacing: 8) {
                         // afterLast 和 fromNow 都是「填间隔」，只是基准不同
                         if newMode.usesDuration {
-                            TextField("0", text: $newHoursText)
+                            TextField("1", text: $newHoursText)
                                 .textFieldStyle(.roundedBorder)
                                 .frame(width: 66)
                                 .multilineTextAlignment(.trailing)
                             Text("小时").font(.subheadline).foregroundStyle(.secondary)
-                            TextField("30", text: $newMinutesText)
+                            TextField("0", text: $newMinutesText)
                                 .textFieldStyle(.roundedBorder)
                                 .frame(width: 66)
                                 .multilineTextAlignment(.trailing)
