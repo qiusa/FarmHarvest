@@ -15,6 +15,7 @@ struct PhoneContentView: View {
     @State private var newCropName = ""
     @State private var newCropMinutes = "30"
     @State private var pendingDelete: CropRecord?
+    @State private var editingRecord: CropRecord?
     @State private var showClearConfirmation = false
     @State private var message: String?
 
@@ -53,10 +54,10 @@ struct PhoneContentView: View {
                     .navigationTitle("收菜记录")
                     .toolbar {
                         ToolbarItem(placement: .topBarTrailing) {
-                            Button("清除已完成") {
+                            Button("清除已收获") {
                                 showClearConfirmation = true
                             }
-                            .disabled(!records.contains(where: \.isFullyHarvested))
+                            .disabled(clearableRecordCount == 0)
                         }
                     }
             }
@@ -77,6 +78,13 @@ struct PhoneContentView: View {
         .sheet(isPresented: $showAddCrop) {
             addCropSheet
         }
+        .sheet(item: $editingRecord, onDismiss: { editingRecord = nil }) { record in
+            PhoneEditRecordSheet(record: record) { updated in
+                CropStore.update(updated)
+                refresh()
+                editingRecord = nil
+            }
+        }
         .confirmationDialog(
             "删除「\(pendingDelete?.name ?? "")」？",
             isPresented: Binding(
@@ -95,20 +103,22 @@ struct PhoneContentView: View {
                 pendingDelete = nil
             }
         } message: {
-            Text("此操作不可撤销。")
+            Text(deleteConfirmationMessage)
         }
         .confirmationDialog(
-            "清除已完成的记录？",
+            "清除已收获或已到收菜时间的记录？",
             isPresented: $showClearConfirmation,
             titleVisibility: .visible
         ) {
             Button("清除", role: .destructive) {
-                CropStore.save(records.filter { !$0.isFullyHarvested })
+                CropStore.save(records.filter {
+                    $0.harvests.isEmpty || !$0.isFullyHarvested
+                })
                 refresh()
             }
             Button("取消", role: .cancel) {}
         } message: {
-            Text("只会清除所有采收时间都已完成的记录。")
+            Text("仅清除每一茬都已采收或已到收菜时间的记录；仍有未来采收时间的记录会保留。")
         }
         .alert("提示", isPresented: Binding(
             get: { message != nil },
@@ -188,16 +198,31 @@ struct PhoneContentView: View {
 
     private var recordsList: some View {
         List {
-            if records.isEmpty {
-                ContentUnavailableView(
-                    "还没有收菜记录",
-                    systemImage: "carrot",
-                    description: Text("到「种菜」页面添加一条记录。")
-                )
-            } else {
+            Section {
+                TimelineView(.periodic(from: .now, by: 5)) { context in
+                    HStack(spacing: 8) {
+                        recordStat("待收", value: countPending(at: context.date), tint: .orange)
+                        recordStat("可收获", value: countReady(at: context.date), tint: .green)
+                        recordStat("总计", value: records.count, tint: .accentColor)
+                    }
+                    .padding(.vertical, 4)
+                }
+                .listRowBackground(Color.clear)
+            }
+
+            Section("收菜记录（\(records.count)）") {
+                if records.isEmpty {
+                    ContentUnavailableView(
+                        "还没有收菜记录",
+                        systemImage: "carrot",
+                        description: Text("到「种菜」页面添加一条记录。")
+                    )
+                    .listRowBackground(Color.clear)
+                } else {
                 ForEach(records) { record in
                     PhoneRecordRow(
                         record: record,
+                        onEdit: { editingRecord = record },
                         onToggleHarvest: { cycle in
                             CropStore.setHarvested(
                                 recordID: record.id,
@@ -223,10 +248,55 @@ struct PhoneContentView: View {
                     }
                     .listRowInsets(EdgeInsets(top: 7, leading: 16, bottom: 7, trailing: 16))
                 }
+                }
             }
         }
         .listStyle(.insetGrouped)
         .refreshable { refresh() }
+    }
+
+    private func recordStat(_ title: String, value: Int, tint: Color) -> some View {
+        VStack(spacing: 2) {
+            Text("\(value)")
+                .font(.title3.bold())
+                .foregroundStyle(tint)
+                .monospacedDigit()
+            Text(title)
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 8)
+        .background(tint.opacity(0.10), in: RoundedRectangle(cornerRadius: 12))
+    }
+
+    /// Match the Mac record summary: a record is ready to clear when every cycle
+    /// has either been harvested or has reached its scheduled time.
+    private func countReady(at now: Date) -> Int {
+        records.filter { record in
+            !record.harvests.isEmpty
+                && record.harvests.allSatisfy { $0.harvested || $0.date <= now }
+        }.count
+    }
+
+    private func countPending(at now: Date) -> Int {
+        records.count - countReady(at: now)
+    }
+
+    private var clearableRecordCount: Int {
+        records.filter { !$0.harvests.isEmpty && $0.isFullyHarvested }.count
+    }
+
+    private var deleteConfirmationMessage: String {
+        guard let record = pendingDelete else { return "" }
+        let count = record.harvests.count
+        if count <= 1 {
+            let date = record.harvests.first.map { fmt($0.date) } ?? "未设置"
+            return "收菜时间 \(date)。此操作不可撤销。"
+        }
+        let harvested = record.harvests.filter(\.harvested).count
+        let next = record.nextHarvest.map { fmt($0) } ?? "无"
+        return "共 \(count) 茬，已采收 \(harvested) 茬。下次收菜：\(next)。此操作不可撤销。"
     }
 
     private var addCropSheet: some View {
@@ -390,6 +460,7 @@ private struct DismissKeyboardOnBackgroundTap: UIViewRepresentable {
 
 private struct PhoneRecordRow: View {
     let record: CropRecord
+    let onEdit: () -> Void
     let onToggleHarvest: (HarvestCycle) -> Void
     let onRenew: () -> Void
 
@@ -415,6 +486,11 @@ private struct PhoneRecordRow: View {
                     }
                 }
                 Spacer()
+                Button(action: onEdit) {
+                    Image(systemName: "pencil")
+                }
+                .buttonStyle(.bordered)
+                .accessibilityLabel("编辑 \(record.name)")
                 Button(action: onRenew) {
                     Label("续种", systemImage: "arrow.clockwise")
                         .labelStyle(.iconOnly)
@@ -423,10 +499,13 @@ private struct PhoneRecordRow: View {
                 .accessibilityLabel("续种 \(record.name)")
             }
 
-            ForEach(record.harvests) { cycle in
+            ForEach(
+                Array(record.harvests.sorted { $0.date < $1.date }.enumerated()),
+                id: \.element.id
+            ) { index, cycle in
                 HStack {
                     VStack(alignment: .leading, spacing: 3) {
-                        Text(fmt(cycle.date))
+                        Text("第 \(index + 1) 茬 · \(fmt(cycle.date))")
                             .font(.subheadline.weight(.semibold))
                         TimelineView(.periodic(from: .now, by: 1)) { context in
                             Text(cycle.harvested
@@ -435,7 +514,10 @@ private struct PhoneRecordRow: View {
                                     ? "可以收菜"
                                     : "还剩 \(remainText(cycle.date, now: context.date))"))
                                 .font(.caption)
-                                .foregroundStyle(cycle.harvested ? .green : (cycle.date <= context.date ? .orange : .secondary))
+                                .foregroundStyle(
+                                    cycle.harvested ? .green
+                                        : (cycle.date <= context.date ? .orange : .secondary)
+                                )
                                 .monospacedDigit()
                         }
                     }
@@ -451,6 +533,260 @@ private struct PhoneRecordRow: View {
             }
         }
         .padding(.vertical, 4)
+    }
+}
+
+private struct PhoneEditRecordSheet: View {
+    let record: CropRecord
+    let onSave: (CropRecord) -> Void
+
+    @Environment(\.dismiss) private var dismiss
+    @State private var name: String
+    @State private var note: String
+    @State private var harvests: [HarvestCycle]
+    @State private var newMode: NewCycleMode = .afterLast
+    @State private var hoursText = "0"
+    @State private var minutesText = "30"
+    @State private var newDate: Date
+    @State private var pendingCycleDelete: HarvestCycle?
+
+    private enum NewCycleMode: String, CaseIterable, Identifiable {
+        case afterLast = "上茬之后"
+        case fromNow = "从现在起"
+        case absoluteDate = "指定时间"
+
+        var id: String { rawValue }
+    }
+
+    init(record: CropRecord, onSave: @escaping (CropRecord) -> Void) {
+        self.record = record
+        self.onSave = onSave
+        _name = State(initialValue: record.name)
+        _note = State(initialValue: record.note ?? "")
+        _harvests = State(initialValue: record.harvests.sorted { $0.date < $1.date })
+        _newDate = State(
+            initialValue: Date().addingTimeInterval(TimeInterval(max(1, record.minutes) * 60))
+        )
+    }
+
+    private var durationMinutes: Int? {
+        guard let hours = Int(hoursText.trimmingCharacters(in: .whitespaces)),
+              let minutes = Int(minutesText.trimmingCharacters(in: .whitespaces)),
+              hours >= 0, minutes >= 0 else { return nil }
+        let (hourMinutes, overflow1) = hours.multipliedReportingOverflow(by: 60)
+        let (total, overflow2) = hourMinutes.addingReportingOverflow(minutes)
+        guard !overflow1, !overflow2, total > 0 else { return nil }
+        return total
+    }
+
+    private var lastHarvestDate: Date {
+        harvests.map(\.date).max() ?? record.plantedAt
+    }
+
+    private var previewDate: Date? {
+        switch newMode {
+        case .afterLast:
+            guard let durationMinutes else { return nil }
+            return lastHarvestDate.addingTimeInterval(TimeInterval(durationMinutes * 60))
+        case .fromNow:
+            guard let durationMinutes else { return nil }
+            return Date().addingTimeInterval(TimeInterval(durationMinutes * 60))
+        case .absoluteDate:
+            return newDate
+        }
+    }
+
+    private var canAddCycle: Bool {
+        guard let previewDate else { return false }
+        return previewDate > Date()
+    }
+
+    private var summary: String {
+        let harvestedCount = harvests.filter(\.harvested).count
+        let next = harvests
+            .filter { !$0.harvested && $0.date > Date() }
+            .map(\.date)
+            .min()
+        var text = "共 \(harvests.count) 茬 · 已采收 \(harvestedCount)"
+        if let next {
+            text += " · 下次 \(fmt(next))"
+        } else if harvestedCount < harvests.count {
+            text += " · 有 \(harvests.count - harvestedCount) 茬待处理"
+        }
+        return text
+    }
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section("记录信息") {
+                    TextField("蔬菜名称", text: $name)
+                    TextField("备注说明", text: $note, axis: .vertical)
+                        .lineLimit(2...4)
+                }
+
+                Section {
+                    if harvests.isEmpty {
+                        Text("至少保留一茬收菜时间，或先添加一茬再保存。")
+                            .font(.footnote)
+                            .foregroundStyle(.orange)
+                    }
+
+                    ForEach($harvests) { $cycle in
+                        VStack(alignment: .leading, spacing: 8) {
+                            DatePicker(
+                                "收菜时间",
+                                selection: $cycle.date,
+                                displayedComponents: [.date, .hourAndMinute]
+                            )
+                            Toggle("已采收", isOn: $cycle.harvested)
+                            HStack {
+                                TimelineView(.periodic(from: .now, by: 1)) { context in
+                                    Text(cycle.harvested
+                                         ? "已采收"
+                                         : (cycle.date <= context.date
+                                            ? "可以收菜"
+                                            : "还剩 \(remainText(cycle.date, now: context.date))"))
+                                        .font(.caption)
+                                        .monospacedDigit()
+                                        .foregroundStyle(
+                                            cycle.harvested ? .green
+                                                : (cycle.date <= context.date ? .orange : .secondary)
+                                        )
+                                }
+                                Spacer()
+                                Button("删除这一茬", role: .destructive) {
+                                    pendingCycleDelete = cycle
+                                }
+                                .font(.caption)
+                            }
+                        }
+                        .padding(.vertical, 4)
+                    }
+                } header: {
+                    Text("收菜时间（每茬可单独编辑）")
+                } footer: {
+                    Text(summary)
+                }
+
+                Section("再续一茬") {
+                    Picker("续期方式", selection: $newMode) {
+                        ForEach(NewCycleMode.allCases) { mode in
+                            Text(mode.rawValue).tag(mode)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+
+                    if newMode == .absoluteDate {
+                        DatePicker(
+                            "收菜时间",
+                            selection: $newDate,
+                            displayedComponents: [.date, .hourAndMinute]
+                        )
+                    } else {
+                        HStack(spacing: 8) {
+                            TextField("0", text: $hoursText)
+                                .keyboardType(.numberPad)
+                                .multilineTextAlignment(.trailing)
+                                .frame(maxWidth: 70)
+                            Text("小时")
+                                .foregroundStyle(.secondary)
+                            TextField("30", text: $minutesText)
+                                .keyboardType(.numberPad)
+                                .multilineTextAlignment(.trailing)
+                                .frame(maxWidth: 70)
+                            Text("分钟")
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+
+                    if let previewDate {
+                        Text(newMode == .afterLast
+                             ? "以上一茬 \(fmt(lastHarvestDate)) 为基准 · \(fmt(previewDate))"
+                             : (newMode == .fromNow
+                                ? "从现在起算 · \(fmt(previewDate))"
+                                : "预计收菜：\(fmt(previewDate))"))
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                    }
+
+                    Button {
+                        addCycle()
+                    } label: {
+                        Label("添加这一茬", systemImage: "plus")
+                    }
+                    .disabled(!canAddCycle)
+                }
+            }
+            .scrollDismissesKeyboard(.interactively)
+            .background(DismissKeyboardOnBackgroundTap())
+            .navigationTitle("编辑记录")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItemGroup(placement: .keyboard) {
+                    Spacer()
+                    Button("收起键盘", action: dismissKeyboard)
+                }
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("取消") { dismiss() }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("保存", action: save)
+                        .disabled(harvests.isEmpty)
+                }
+            }
+            .confirmationDialog(
+                "删除这一茬？",
+                isPresented: Binding(
+                    get: { pendingCycleDelete != nil },
+                    set: { if !$0 { pendingCycleDelete = nil } }
+                ),
+                titleVisibility: .visible
+            ) {
+                Button("删除", role: .destructive) {
+                    guard let id = pendingCycleDelete?.id else { return }
+                    harvests.removeAll { $0.id == id }
+                    pendingCycleDelete = nil
+                }
+                Button("取消", role: .cancel) {
+                    pendingCycleDelete = nil
+                }
+            } message: {
+                if let cycle = pendingCycleDelete {
+                    let remaining = harvests.count - 1
+                    Text(remaining == 0
+                         ? "收菜时间 \(fmt(cycle.date))。这是唯一一茬，删除后需要重新添加才能保存。"
+                         : "收菜时间 \(fmt(cycle.date))。删除后还剩 \(remaining) 茬。")
+                }
+            }
+        }
+        .presentationDetents([.large])
+    }
+
+    private func addCycle() {
+        guard let previewDate, previewDate > Date() else { return }
+        harvests.append(HarvestCycle(date: previewDate))
+        harvests.sort { $0.date < $1.date }
+        newDate = previewDate
+    }
+
+    private func save() {
+        guard !harvests.isEmpty else { return }
+        let sorted = harvests.sorted { $0.date < $1.date }
+        let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedNote = note.trimmingCharacters(in: .whitespacesAndNewlines)
+        let firstDate = sorted[0].date
+        let updated = CropRecord(
+            id: record.id,
+            name: trimmedName.isEmpty ? record.name : trimmedName,
+            colorHex: record.colorHex,
+            minutes: max(0, Int(firstDate.timeIntervalSince(record.plantedAt) / 60)),
+            plantedAt: record.plantedAt,
+            harvests: sorted,
+            note: trimmedNote.isEmpty ? nil : trimmedNote
+        )
+        onSave(updated)
+        dismiss()
     }
 }
 
