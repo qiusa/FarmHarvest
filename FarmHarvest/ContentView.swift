@@ -258,6 +258,7 @@ struct ContentView: View {
     /// 左侧录入面板是否收起。收起后记录区独占宽度，适合记录多时查看。
     @State private var inputCollapsed: Bool = false
     private let compactRecordsBreakpoint: CGFloat = 520
+    private let compactWindowMinimumWidth: CGFloat = 300
 
     private var selectedPreset: CropPreset? {
         presets.first { $0.id == selectedPresetID }
@@ -325,7 +326,7 @@ struct ContentView: View {
                     recordsPane(compact: compactRecords)
                         .frame(minWidth: compactRecords ? 0 : 380)
                 }
-                .frame(minWidth: inputCollapsed ? 360 : 900)
+                .frame(minWidth: inputCollapsed ? compactWindowMinimumWidth : 900)
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             }
             .navigationTitle("农场收菜")
@@ -376,13 +377,13 @@ struct ContentView: View {
         }
         .background {
             WindowMinimumSizeConfigurator(
-                minWidth: inputCollapsed ? 360 : 900,
+                minWidth: inputCollapsed ? compactWindowMinimumWidth : 900,
                 minHeight: 620
             )
             .frame(width: 1, height: 1)
             .hidden()
         }
-        .frame(minWidth: inputCollapsed ? 360 : 900, minHeight: 620)
+        .frame(minWidth: inputCollapsed ? compactWindowMinimumWidth : 900, minHeight: 620)
         .confirmationDialog("清除 \(readyCount) 条已收获的记录？",
                             isPresented: $clearReadyConfirm, titleVisibility: .visible) {
             Button("清除", role: .destructive) { clearReadyRecords() }
@@ -886,12 +887,23 @@ struct RecordRow: View {
                                 .foregroundStyle(.tertiary)
                         } else {
                             ForEach(r.harvests) { cycle in
+                                let isUrgent = !cycle.harvested
+                                    && cycle.date.timeIntervalSinceNow <= Self.urgentSeconds
+                                let timeTint: Color = cycle.harvested ? .green
+                                    : (isUrgent ? .orange : .secondary)
+
                                 Text(fmt(cycle.date))
-                                    .font(.callout.weight(.semibold))
+                                    .font(.callout.weight(isUrgent ? .bold : .semibold))
                                     .monospacedDigit()
-                                    .foregroundStyle(.secondary)
+                                    .foregroundStyle(timeTint)
                                     .lineLimit(1)
                                     .minimumScaleFactor(0.8)
+                                    .padding(.horizontal, 4)
+                                    .padding(.vertical, 2)
+                                    .background(
+                                        isUrgent ? Color.orange.opacity(0.14) : .clear,
+                                        in: RoundedRectangle(cornerRadius: 5, style: .continuous)
+                                    )
                             }
                         }
                     }
@@ -1068,8 +1080,8 @@ struct RecordRow: View {
         })
     }
 
-    /// 临近阈值：20 分钟内进入高亮态
-    private static let urgentSeconds: TimeInterval = 20 * 60
+    /// 临近阈值：30 分钟内高亮提示
+    private static let urgentSeconds: TimeInterval = 30 * 60
 
     private func accessibilityText(_ c: HarvestCycle) -> String {
         let base = fmt(c.date)
