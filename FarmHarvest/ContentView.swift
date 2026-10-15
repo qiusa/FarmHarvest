@@ -257,8 +257,9 @@ struct ContentView: View {
     @State private var pendingDelete: CropRecord? = nil
     /// 左侧录入面板是否收起。收起后记录区独占宽度，适合记录多时查看。
     @State private var inputCollapsed: Bool = false
+    @State private var widthBeforeCompact: CGFloat?
     private let compactRecordsBreakpoint: CGFloat = 520
-    private let compactWindowMinimumWidth: CGFloat = 300
+    private let compactWindowMinimumWidth: CGFloat = 260
 
     private var selectedPreset: CropPreset? {
         presets.first { $0.id == selectedPresetID }
@@ -420,7 +421,7 @@ struct ContentView: View {
 
     /// 收起态的左栏；窄屏再收窄，只保留展开和自定义入口。
     private func collapsedPane(compact: Bool) -> some View {
-        VStack(spacing: 14) {
+        VStack(spacing: compact ? 10 : 14) {
             Button {
                 withAnimation(.smooth) { inputCollapsed = false }
             } label: {
@@ -432,6 +433,16 @@ struct ContentView: View {
             }
             .buttonStyle(.plain)
             .help("展开录入面板")
+
+            Button(action: toggleWindowWidth) {
+                Image(systemName: "arrow.left.and.right")
+                    .font(.system(size: compact ? 12 : 13, weight: .semibold))
+                    .frame(width: 28, height: 28)
+                    .background(Color.primary.opacity(0.07),
+                                in: RoundedRectangle(cornerRadius: 8))
+            }
+            .buttonStyle(.plain)
+            .help("点击收窄到最小宽度，再点恢复原宽度")
 
             if !compact {
                 // 收起时仍能看到最要紧的两个数。统计条本身低频刷新（5 秒），
@@ -473,9 +484,9 @@ struct ContentView: View {
                     showAddCrop = true
                 } label: {
                     Image(systemName: "slider.horizontal.3")
-                        .font(.system(size: 13, weight: .semibold))
+                        .font(.system(size: compact ? 12 : 13, weight: .semibold))
                         .foregroundStyle(.secondary)
-                        .frame(width: 34, height: 34)
+                        .frame(width: compact ? 28 : 34, height: compact ? 28 : 34)
                         .background(Color.primary.opacity(0.07),
                                     in: Circle())
                 }
@@ -485,8 +496,8 @@ struct ContentView: View {
 
             Spacer(minLength: 0)
         }
-        .padding(.vertical, compact ? 12 : 16)
-        .frame(width: compact ? 48 : 76)
+        .padding(.vertical, compact ? 8 : 16)
+        .frame(width: compact ? 40 : 76)
         .background(Color.primary.opacity(0.02))
     }
 
@@ -725,7 +736,7 @@ struct ContentView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             }
         }
-        .padding(compact ? 10 : 20)
+        .padding(compact ? 6 : 20)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
 
@@ -831,6 +842,33 @@ struct ContentView: View {
         CropNotifier.reschedule(records)
         CropStore.reloadWidget()
     }
+
+    /// 在当前宽度与最小宽度之间切换；收窄时记住原宽度，第二次点击恢复。
+    private func toggleWindowWidth() {
+        guard let window = NSApp.keyWindow ?? NSApp.mainWindow ?? NSApp.windows.first else {
+            return
+        }
+
+        let targetWidth: CGFloat
+        if let restoreWidth = widthBeforeCompact {
+            targetWidth = restoreWidth
+            widthBeforeCompact = nil
+        } else if window.frame.width <= compactWindowMinimumWidth + 1 {
+            // 如果窗口重启后已经处于最小宽度，点击仍可恢复到常用宽度。
+            targetWidth = 900
+        } else {
+            widthBeforeCompact = window.frame.width
+            targetWidth = compactWindowMinimumWidth
+        }
+
+        var minimumSize = window.minSize
+        minimumSize.width = compactWindowMinimumWidth
+        window.minSize = minimumSize
+
+        var frame = window.frame
+        frame.size.width = targetWidth
+        window.setFrame(frame, display: true, animate: true)
+    }
 }
 
 /// 蔬菜选择卡片（玻璃质感，选中高亮）
@@ -878,8 +916,8 @@ struct RecordRow: View {
     var body: some View {
         Group {
             if compact {
-                HStack(alignment: .top, spacing: 8) {
-                    avatar(size: 28, font: .caption.bold())
+                HStack(alignment: .top, spacing: 6) {
+                    avatar(size: 26, font: .caption.bold())
                     VStack(alignment: .leading, spacing: 4) {
                         if r.harvests.isEmpty {
                             Text("未设置收菜时间")
@@ -898,6 +936,7 @@ struct RecordRow: View {
                                     .foregroundStyle(timeTint)
                                     .lineLimit(1)
                                     .minimumScaleFactor(0.8)
+                                    .layoutPriority(1)
                                     .padding(.horizontal, 4)
                                     .padding(.vertical, 2)
                                     .background(
@@ -921,7 +960,7 @@ struct RecordRow: View {
                 regularContent
             }
         }
-        .padding(compact ? 8 : 12)
+        .padding(compact ? 6 : 12)
         .frame(maxWidth: .infinity, alignment: .leading)
         .glassEffect(in: RoundedRectangle(cornerRadius: 16, style: .continuous))
         .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous)
