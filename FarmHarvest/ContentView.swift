@@ -203,6 +203,39 @@ struct GlassPanel<Content: View>: View {
     }
 }
 
+/// SwiftUI 的最小宽度变更不一定会同步下发到已创建的 NSWindow，
+/// 因此折叠侧栏时也显式更新原生窗口的尺寸限制。
+private struct WindowMinimumSizeConfigurator: NSViewRepresentable {
+    let minWidth: CGFloat
+    let minHeight: CGFloat
+
+    func makeNSView(context: Context) -> WindowMinimumSizeView {
+        let view = WindowMinimumSizeView()
+        view.minimumSize = NSSize(width: minWidth, height: minHeight)
+        return view
+    }
+
+    func updateNSView(_ nsView: WindowMinimumSizeView, context: Context) {
+        nsView.minimumSize = NSSize(width: minWidth, height: minHeight)
+    }
+}
+
+private final class WindowMinimumSizeView: NSView {
+    var minimumSize = NSSize.zero {
+        didSet { applyMinimumSize() }
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        applyMinimumSize()
+    }
+
+    private func applyMinimumSize() {
+        guard let window else { return }
+        window.minSize = minimumSize
+    }
+}
+
 struct ContentView: View {
     @State private var records: [CropRecord] = CropStore.load()
     // 必须缓存成 @State：CropStore.presets 是计算属性，改动文件后 SwiftUI 不会
@@ -224,6 +257,7 @@ struct ContentView: View {
     @State private var pendingDelete: CropRecord? = nil
     /// 左侧录入面板是否收起。收起后记录区独占宽度，适合记录多时查看。
     @State private var inputCollapsed: Bool = false
+    private let compactRecordsBreakpoint: CGFloat = 520
 
     private var selectedPreset: CropPreset? {
         presets.first { $0.id == selectedPresetID }
@@ -276,19 +310,24 @@ struct ContentView: View {
         NavigationStack {
             // 左右分栏：左侧录入、右侧收菜记录，首屏即可看到记录。
             // 左侧可折叠：记录多的时候收起，把宽度全让给记录区。
-            HStack(alignment: .top, spacing: 0) {
-                if inputCollapsed {
-                    collapsedPane
-                } else {
-                    inputPane
-                        .frame(minWidth: 420, idealWidth: 480, maxWidth: 560)
+            GeometryReader { geometry in
+                let compactRecords = inputCollapsed
+                    && geometry.size.width < compactRecordsBreakpoint
+
+                HStack(alignment: .top, spacing: 0) {
+                    if inputCollapsed {
+                        collapsedPane(compact: compactRecords)
+                    } else {
+                        inputPane
+                            .frame(minWidth: 420, idealWidth: 480, maxWidth: 560)
+                    }
+                    Divider()
+                    recordsPane(compact: compactRecords)
+                        .frame(minWidth: compactRecords ? 0 : 380)
                 }
-                Divider()
-                recordsPane
-                    .frame(minWidth: 380)
+                .frame(minWidth: inputCollapsed ? 360 : 900)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             }
-            // 收起时窗口可以更窄，不必再为左栏留 420 的下限
-            .frame(minWidth: inputCollapsed ? 520 : 900)
             .navigationTitle("农场收菜")
             .navigationSubtitle("桌面实时倒计时")
             .background(.clear)
@@ -335,7 +374,15 @@ struct ContentView: View {
                 })
             }
         }
-        .frame(minWidth: 900, minHeight: 620)
+        .background {
+            WindowMinimumSizeConfigurator(
+                minWidth: inputCollapsed ? 360 : 900,
+                minHeight: 620
+            )
+            .frame(width: 1, height: 1)
+            .hidden()
+        }
+        .frame(minWidth: inputCollapsed ? 360 : 900, minHeight: 620)
         .confirmationDialog("清除 \(readyCount) 条已收获的记录？",
                             isPresented: $clearReadyConfirm, titleVisibility: .visible) {
             Button("清除", role: .destructive) { clearReadyRecords() }
@@ -370,9 +417,8 @@ struct ContentView: View {
 
     // MARK: - 左栏：录入
 
-    /// 收起态的左栏：只留一条窄边（展开 / 统计 / 快速录入 / 自定义入口），
-    /// 不做成完全空白，否则左半屏空着反而浪费。
-    private var collapsedPane: some View {
+    /// 收起态的左栏；窄屏再收窄，只保留展开和自定义入口。
+    private func collapsedPane(compact: Bool) -> some View {
         VStack(spacing: 14) {
             Button {
                 withAnimation(.smooth) { inputCollapsed = false }
@@ -386,35 +432,39 @@ struct ContentView: View {
             .buttonStyle(.plain)
             .help("展开录入面板")
 
-            // 收起时仍能看到最要紧的两个数。统计条本身低频刷新（5 秒），
-            // 这里跟着它走即可，不必再单独包秒级 TimelineView。
-            TimelineView(.periodic(from: .now, by: 5)) { ctx in
-                VStack(spacing: 8) {
-                    collapsedStat("待收", count: countPending(at: ctx.date), tint: .orange)
-                    collapsedStat("可收", count: countReady(at: ctx.date), tint: .green)
+            if !compact {
+                // 收起时仍能看到最要紧的两个数。统计条本身低频刷新（5 秒），
+                // 这里跟着它走即可，不必再单独包秒级 TimelineView。
+                TimelineView(.periodic(from: .now, by: 5)) { ctx in
+                    VStack(spacing: 8) {
+                        collapsedStat("待收", count: countPending(at: ctx.date), tint: .orange)
+                        collapsedStat("可收", count: countReady(at: ctx.date), tint: .green)
+                    }
                 }
+                .padding(.top, 6)
             }
-            .padding(.top, 6)
 
             // 快捷入口组：快速记录 + 自定义（蔬菜管理 / 导入导出）
-            VStack(spacing: 10) {
+            VStack(spacing: compact ? 0 : 10) {
                 // 「种下并记录」是最高频操作，收起后不该消失——
                 // 用当前选中的蔬菜和已填时长直接记一条，省得展开再点。
-                Button {
-                    addRecord()
-                } label: {
-                    Image(systemName: "plus")
-                        .font(.system(size: 14, weight: .semibold))
-                        .foregroundStyle(.white)
-                        .frame(width: 34, height: 34)
-                        .background(Color.accentColor, in: Circle())
+                if !compact {
+                    Button {
+                        addRecord()
+                    } label: {
+                        Image(systemName: "plus")
+                            .font(.system(size: 14, weight: .semibold))
+                            .foregroundStyle(.white)
+                            .frame(width: 34, height: 34)
+                            .background(Color.accentColor, in: Circle())
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(!canAdd)
+                    .opacity(canAdd ? 1 : 0.35)
+                    .help(canAdd
+                          ? "种下「\(selectedPreset?.name ?? "")」并记录"
+                          : "请先选蔬菜并填写时长（需展开面板）")
                 }
-                .buttonStyle(.plain)
-                .disabled(!canAdd)
-                .opacity(canAdd ? 1 : 0.35)
-                .help(canAdd
-                      ? "种下「\(selectedPreset?.name ?? "")」并记录"
-                      : "请先选蔬菜并填写时长（需展开面板）")
 
                 // 自定义蔬菜 / 管理 / 导入导出备份。
                 // 展开态这个入口在「选择蔬菜」标题行，收起后不能跟着消失。
@@ -434,8 +484,8 @@ struct ContentView: View {
 
             Spacer(minLength: 0)
         }
-        .padding(.vertical, 16)
-        .frame(width: 76)
+        .padding(.vertical, compact ? 12 : 16)
+        .frame(width: compact ? 48 : 76)
         .background(Color.primary.opacity(0.02))
     }
 
@@ -609,37 +659,39 @@ struct ContentView: View {
 
     // MARK: - 右栏：收菜记录（首屏可见）
 
-    private var recordsPane: some View {
+    private func recordsPane(compact: Bool) -> some View {
         VStack(alignment: .leading, spacing: 14) {
-            // 统计条：待收 / 已收获。
-            // 这两个数字只会在「某茬跨越到期时刻」时突变，与秒级倒计时不同源，
-            // 所以用 5 秒粒度即可——比给整页套 1 秒刷新省 80% 的重绘开销。
-            TimelineView(.periodic(from: .now, by: 5)) { ctx in
-                HStack(spacing: 10) {
-                    statTile(title: "待收", value: countPending(at: ctx.date), tint: .orange)
-                    statTile(title: "可收获", value: countReady(at: ctx.date), tint: .green)
-                    statTile(title: "总计", value: records.count, tint: .accentColor)
-                }
-            }
-
-            HStack(spacing: 8) {
-                Text("收菜记录")
-                    .font(.headline)
-                Text("\(records.count)")
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-                Spacer()
-                if !records.isEmpty {
-                    Button {
-                        clearReadyConfirm = true
-                    } label: {
-                        Label("清除已收获", systemImage: "trash")
-                            .font(.caption)
+            if !compact {
+                // 统计条：待收 / 已收获。
+                // 这两个数字只会在「某茬跨越到期时刻」时突变，与秒级倒计时不同源，
+                // 所以用 5 秒粒度即可——比给整页套 1 秒刷新省 80% 的重绘开销。
+                TimelineView(.periodic(from: .now, by: 5)) { ctx in
+                    HStack(spacing: 10) {
+                        statTile(title: "待收", value: countPending(at: ctx.date), tint: .orange)
+                        statTile(title: "可收获", value: countReady(at: ctx.date), tint: .green)
+                        statTile(title: "总计", value: records.count, tint: .accentColor)
                     }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
-                    .disabled(readyCount == 0)
-                    .help("移除 \(readyCount) 条已到收菜时间的记录")
+                }
+
+                HStack(spacing: 8) {
+                    Text("收菜记录")
+                        .font(.headline)
+                    Text("\(records.count)")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                    if !records.isEmpty {
+                        Button {
+                            clearReadyConfirm = true
+                        } label: {
+                            Label("清除已收获", systemImage: "trash")
+                                .font(.caption)
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                        .disabled(readyCount == 0)
+                        .help("移除 \(readyCount) 条已到收菜时间的记录")
+                    }
                 }
             }
 
@@ -656,16 +708,24 @@ struct ContentView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 ScrollView {
-                    LazyVStack(spacing: 10) {
+                    LazyVStack(alignment: .leading, spacing: 10) {
                         ForEach(records) { r in
-                            RecordRow(r: r, onEdit: { editTarget = r }, onDelete: { delete(r) })
+                            RecordRow(
+                                r: r,
+                                compact: compact,
+                                onEdit: { editTarget = r },
+                                onDelete: { delete(r) }
+                            )
                         }
                     }
+                    .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.vertical, 2)
                 }
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             }
         }
-        .padding(20)
+        .padding(compact ? 10 : 20)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
 
     private func statTile(title: String, value: Int, tint: Color) -> some View {
@@ -809,19 +869,70 @@ struct VegetableChip: View {
 /// 收菜记录行（玻璃卡片，右栏窄空间下用图标按钮 + hover 显示操作）
 struct RecordRow: View {
     let r: CropRecord
+    var compact: Bool = false
     let onEdit: () -> Void
     let onDelete: () -> Void
     @State private var hovering = false
 
     var body: some View {
+        Group {
+            if compact {
+                HStack(alignment: .top, spacing: 8) {
+                    avatar(size: 28, font: .caption.bold())
+                    VStack(alignment: .leading, spacing: 4) {
+                        if r.harvests.isEmpty {
+                            Text("未设置收菜时间")
+                                .font(.caption)
+                                .foregroundStyle(.tertiary)
+                        } else {
+                            ForEach(r.harvests) { cycle in
+                                Text(fmt(cycle.date))
+                                    .font(.callout.weight(.semibold))
+                                    .monospacedDigit()
+                                    .foregroundStyle(.secondary)
+                                    .lineLimit(1)
+                                    .minimumScaleFactor(0.8)
+                            }
+                        }
+                    }
+                }
+                .contentShape(Rectangle())
+                .onTapGesture(perform: onEdit)
+                .contextMenu {
+                    Button("编辑", systemImage: "pencil", action: onEdit)
+                    Button("删除", systemImage: "trash", role: .destructive, action: onDelete)
+                }
+                .accessibilityElement(children: .combine)
+                .accessibilityHint("点击编辑，或使用右键菜单删除")
+                .help("点击编辑；右键可删除")
+            } else {
+                regularContent
+            }
+        }
+        .padding(compact ? 8 : 12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .glassEffect(in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous)
+            .strokeBorder(Color.primary.opacity(0.07), lineWidth: 1))
+        // 整卡左侧的橙色竖条：行内高亮只占小块位置，扫列表时容易漏看，
+        // 加一条贯穿的边条让「快到点 / 已到点」的记录在余光里也能被捕捉到。
+        .overlay(alignment: .leading) {
+            if !compact, cardHighlightTint != nil {
+                RoundedRectangle(cornerRadius: 2)
+                    .fill(cardHighlightTint!)
+                    .frame(width: 3)
+                    .padding(.vertical, 10)
+                    .padding(.leading, 1)
+            }
+        }
+        .shadow(color: .black.opacity(0.05), radius: 6, y: 2)
+        .onHover { hovering = $0 }
+        .animation(.easeOut(duration: 0.15), value: hovering)
+    }
+
+    private var regularContent: some View {
         HStack(spacing: 10) {
-            Circle()
-                .fill(LinearGradient(colors: [Color(hex: r.colorHex),
-                                              Color(hex: r.colorHex).opacity(0.7)],
-                                     startPoint: .top, endPoint: .bottom))
-                .frame(width: 36, height: 36)
-                .overlay(Text(String(r.name.prefix(1)))
-                    .foregroundColor(.white).font(.subheadline.bold()))
+            avatar(size: 36, font: .subheadline.bold())
             VStack(alignment: .leading, spacing: 4) {
                 Text(r.name).font(.subheadline.bold())
 
@@ -866,24 +977,16 @@ struct RecordRow: View {
             .opacity(hovering ? 1 : 0.4)
             .help("删除这条记录（会先弹出确认）")
         }
-        .padding(12)
-        .glassEffect(in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous)
-            .strokeBorder(Color.primary.opacity(0.07), lineWidth: 1))
-        // 整卡左侧的橙色竖条：行内高亮只占小块位置，扫列表时容易漏看，
-        // 加一条贯穿的边条让「快到点 / 已到点」的记录在余光里也能被捕捉到。
-        .overlay(alignment: .leading) {
-            if cardHighlightTint != nil {
-                RoundedRectangle(cornerRadius: 2)
-                    .fill(cardHighlightTint!)
-                    .frame(width: 3)
-                    .padding(.vertical, 10)
-                    .padding(.leading, 1)
-            }
-        }
-        .shadow(color: .black.opacity(0.05), radius: 6, y: 2)
-        .onHover { hovering = $0 }
-        .animation(.easeOut(duration: 0.15), value: hovering)
+    }
+
+    private func avatar(size: CGFloat, font: Font) -> some View {
+        Circle()
+            .fill(LinearGradient(colors: [Color(hex: r.colorHex),
+                                          Color(hex: r.colorHex).opacity(0.7)],
+                                 startPoint: .top, endPoint: .bottom))
+            .frame(width: size, height: size)
+            .overlay(Text(String(r.name.prefix(1)))
+                .foregroundColor(.white).font(font))
     }
 
     /// 卡片级高亮色：只要有任一茬到期或临近就返回橙色。nil = 无需高亮。
