@@ -93,7 +93,8 @@ struct FarmHarvestWidgetEntryView: View {
                 pageControls
             }
         }
-        .padding(12)
+        .padding(.horizontal, 4)
+        .padding(.vertical, 10)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         // macOS 26+ 强制要求：必须用 containerBackground 声明背景，
         // 否则渲染失败并显示 "Please adopt container/Background API"。
@@ -208,37 +209,45 @@ private struct CompactFarmRow: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 1) {
-            if cycles.isEmpty {
+        HStack(alignment: .center, spacing: 12) {
+            VStack(alignment: .leading, spacing: 5) {
                 HStack(spacing: 7) {
                     cropBadge
                     cropName
-                    Spacer(minLength: 3)
-                    Text("未设置收菜时间")
-                        .font(.system(size: 8, weight: .medium))
-                        .foregroundStyle(.tertiary)
-                        .fixedSize(horizontal: true, vertical: false)
                 }
-                .frame(height: 18)
-            } else {
-                ForEach(Array(cycles.enumerated()), id: \.element.id) { index, cycle in
-                    cycleLine(cycle, showsName: index == 0)
-                }
-            }
 
-            if let note = r.note, !note.isEmpty {
-                NotePresetRecordNote(note: note)
-                    .font(.system(size: 9))
-                    .padding(.leading, 24)
-                    .padding(.top, 1)
+                if let note = r.note, !note.isEmpty {
+                    NotePresetRecordNote(note: note)
+                        .font(.caption2)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
+
+            VStack(alignment: .trailing, spacing: 5) {
+                if cycles.isEmpty {
+                    Text("未设置收菜时间")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                } else {
+                    ForEach(cycles) { cycle in
+                        HStack(spacing: 8) {
+                            Text(fmt(cycle.date))
+                                .font(.system(size: 10, weight: .semibold, design: .rounded).monospacedDigit())
+                                .foregroundStyle(.secondary)
+                                .fixedSize(horizontal: true, vertical: false)
+                            compactStatus(cycle)
+                                .fixedSize(horizontal: true, vertical: false)
+                        }
+                    }
+                }
+            }
+            .fixedSize(horizontal: true, vertical: false)
         }
-        .padding(.horizontal, 6)
-        .padding(.vertical, 3)
-        .background(
-            Color.primary.opacity(0.045),
-            in: RoundedRectangle(cornerRadius: 7, style: .continuous)
-        )
+        .padding(.horizontal, 8)
+        .padding(.vertical, 7)
+        .background(Color.primary.opacity(0.045),
+                    in: RoundedRectangle(cornerRadius: 7, style: .continuous))
     }
 
     private var cropBadge: some View {
@@ -257,27 +266,6 @@ private struct CompactFarmRow: View {
             .font(.caption.weight(.medium))
             .lineLimit(1)
             .truncationMode(.tail)
-    }
-
-    private func cycleLine(_ cycle: HarvestCycle, showsName: Bool) -> some View {
-        HStack(spacing: 7) {
-            if showsName {
-                cropBadge
-                cropName
-            } else {
-                Color.clear
-                    .frame(width: 17, height: 17)
-            }
-
-            Spacer(minLength: 3)
-            Text(fmt(cycle.date))
-                .font(.system(size: 10, weight: .semibold, design: .rounded).monospacedDigit())
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: true, vertical: false)
-            compactStatus(cycle)
-                .fixedSize(horizontal: true, vertical: false)
-        }
-        .frame(height: 18)
     }
 
     @ViewBuilder
