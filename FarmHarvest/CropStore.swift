@@ -139,8 +139,11 @@ enum CropStore {
     // 关键：macOS 上必须用「TeamID 前缀」的 App Group，无需 provisioning profile；
     // 若用 group. 前缀则强制要求 profile，本机没有 → 授权失败、App 与 Widget 无法共享数据。
     static let appGroup = "MWYKGVPTJP.com.yixin.farmharvest"
-    static let defaultRemoteBackupURLString =
-        "https://qiniu.yixin.im/manage-web/manager-pulish/test-web/a.json"
+    static let sourceBackupFileName = "FarmHarvest.json"
+    static let sourceBackupURLString = "http://192.168.200.94:10023/source/FarmHarvest.json"
+    static let defaultRemoteBackupURLString = sourceBackupURLString
+    private static let sourceDownloadHost = "192.168.200.94"
+    private static let sourceDownloadPort = 10023
 
     // 存储根目录。优先 App Group 共享容器（Widget 与主 App 才能互通）；
 // 关键：不能只看 containerURL != nil —— 容器路径存在但目录不可写（常见于
@@ -474,6 +477,32 @@ enum CropStore {
         try exportBackupJSON().write(to: url, options: .atomic)
     }
 
+    /// 仅允许现有 HTTPS 备份地址，以及上传 API 返回的固定局域网下载地址。
+    static func isAllowedRemoteBackupURL(_ url: URL) -> Bool {
+        guard let scheme = url.scheme?.lowercased(),
+              let host = url.host?.lowercased() else {
+            return false
+        }
+        if scheme == "https" {
+            return true
+        }
+        guard scheme == "http",
+              host == sourceDownloadHost,
+              url.port == sourceDownloadPort,
+              url.user == nil,
+              url.password == nil,
+              url.query == nil,
+              url.fragment == nil else {
+            return false
+        }
+        let components = url.path.split(separator: "/", omittingEmptySubsequences: true)
+        return components.count == 2
+            && components[0] == "source"
+            && components[1] != "."
+            && components[1] != ".."
+            && !components[1].contains("\\")
+    }
+
     /// 从 JSON 数据导入
     static func importBackup(from data: Data, mode: ImportMode) throws -> ImportSummary {
         let dec = JSONDecoder()
@@ -538,12 +567,11 @@ enum CropStore {
                              mode: mode)
     }
 
-    /// 从 HTTPS 地址下载并导入备份。请求跳过本机缓存，并要求上游重新验证，
-    /// 避免 CDN 长缓存让手机读到旧备份。
+    /// 从 HTTPS 地址或受限的局域网共享地址下载并导入备份。
     static func importBackup(fromRemoteURL url: URL, mode: ImportMode) async throws -> ImportSummary {
-        guard url.scheme?.lowercased() == "https", url.host != nil else {
+        guard isAllowedRemoteBackupURL(url) else {
             throw NSError(domain: "FarmHarvest", code: 2, userInfo: [
-                NSLocalizedDescriptionKey: "远程备份必须使用有效的 HTTPS 地址。"
+                NSLocalizedDescriptionKey: "请输入有效的 HTTPS 地址，或上传接口返回的局域网下载地址。"
             ])
         }
 
@@ -599,6 +627,7 @@ enum CropStore {
         return try importBackup(from: data, mode: mode)
     }
 }
+
 
 extension Color {
     init(hex: String) {

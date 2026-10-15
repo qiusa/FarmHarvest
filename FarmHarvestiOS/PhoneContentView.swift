@@ -17,9 +17,9 @@ struct PhoneContentView: View {
     @State private var pendingDelete: CropRecord?
     @State private var editingRecord: CropRecord?
     @State private var showClearConfirmation = false
-    @State private var remoteBackupURL = CropStore.defaultRemoteBackupURLString
     @State private var remoteImportMode: CropStore.ImportMode = .merge
     @State private var isImportingRemoteBackup = false
+    @State private var isUploadingBackup = false
     @State private var showRemoteReplaceConfirmation = false
     @State private var pendingRemoteImportURL: URL?
     @State private var message: String?
@@ -378,13 +378,37 @@ struct PhoneContentView: View {
 
     private var remoteImportForm: some View {
         Form {
-            Section("远程备份地址") {
-                TextField("HTTPS 备份地址", text: $remoteBackupURL)
-                    .keyboardType(.URL)
-                    .textInputAutocapitalization(.never)
-                    .autocorrectionDisabled()
+            Section("上传备份到共享目录") {
+                Text("上传文件名：\(CropStore.sourceBackupFileName)。固定导入地址：\(CropStore.sourceBackupURLString)。请仅在可信局域网内使用。")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
 
-                Text("默认填写的是电脑导出的 JSON 地址。手机和电脑都可从该地址导入。")
+                Text("接口不覆盖已有文件；若同名文件存在，服务器会追加序号，固定地址仍指向原文件。")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+
+                Button {
+                    Task { await uploadCurrentBackup() }
+                } label: {
+                    HStack {
+                        Spacer()
+                        if isUploadingBackup {
+                            ProgressView("正在上传备份…")
+                        } else {
+                            Label("上传当前备份", systemImage: "arrow.up.doc")
+                        }
+                        Spacer()
+                    }
+                }
+                .disabled(isUploadingBackup)
+            }
+
+            Section("远程备份地址") {
+                Text(CropStore.defaultRemoteBackupURLString)
+                    .font(.footnote.monospaced())
+                    .textSelection(.enabled)
+
+                Text("手机和电脑都可从共享目录下载地址或 HTTPS 地址导入。")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
             }
@@ -419,7 +443,7 @@ struct PhoneContentView: View {
             }
 
             Section {
-                Text("远程导入只会下载数据，不会把手机上的修改自动上传到该地址。")
+                Text("上传会将当前备份保存为一个新文件，不会覆盖已有文件；手机上的修改不会自动同步。")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
             }
@@ -435,10 +459,9 @@ struct PhoneContentView: View {
     }
 
     private func startRemoteImport() {
-        guard let url = URL(string: remoteBackupURL.trimmingCharacters(in: .whitespacesAndNewlines)),
-              url.scheme?.lowercased() == "https",
-              url.host != nil else {
-            message = "请输入有效的 HTTPS 备份地址。"
+        guard let url = URL(string: CropStore.defaultRemoteBackupURLString),
+              CropStore.isAllowedRemoteBackupURL(url) else {
+            message = "请输入有效的 HTTPS 地址，或上传接口返回的局域网下载地址。"
             return
         }
 
@@ -467,6 +490,24 @@ struct PhoneContentView: View {
             }
         } catch {
             message = "远程导入失败：\(error.localizedDescription)"
+        }
+    }
+
+    @MainActor
+    private func uploadCurrentBackup() async {
+        isUploadingBackup = true
+        defer { isUploadingBackup = false }
+
+        do {
+            let data = try CropStore.exportBackupJSON()
+            let result = try await SourceFileUploader.uploadBackup(data: data)
+            if result.fileName == CropStore.sourceBackupFileName {
+                message = "上传成功：\(result.fileName)，可从固定地址导入。"
+            } else {
+                message = "上传成功，但服务器因同名自动保存为 \(result.fileName)；固定地址仍指向旧文件。接口不支持覆盖，请联系管理员提供固定文件更新方式。"
+            }
+        } catch {
+            message = "上传失败：\(error.localizedDescription)"
         }
     }
 

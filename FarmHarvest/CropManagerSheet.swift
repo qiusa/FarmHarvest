@@ -35,8 +35,8 @@ struct CropManagerSheet: View {
     @State private var toast: String?
     @State private var toastIsError: Bool = false
     @State private var importMode: CropStore.ImportMode = .merge
-    @State private var remoteBackupURL = CropStore.defaultRemoteBackupURLString
     @State private var isImportingRemoteBackup = false
+    @State private var isUploadingBackup = false
     @State private var showRemoteReplaceConfirmation = false
     @State private var pendingRemoteImportURL: URL?
 
@@ -113,7 +113,7 @@ struct CropManagerSheet: View {
         .fileExporter(isPresented: $showExporter,
                       document: BackupDocument(data: exportData),
                       contentType: .json,
-                      defaultFilename: "FarmHarvest-备份-\(Self.stamp())") { result in
+                      defaultFilename: CropStore.sourceBackupFileName) { result in
             switch result {
             case .success(let url):
                 show("已导出到 \(url.lastPathComponent)")
@@ -345,88 +345,118 @@ struct CropManagerSheet: View {
     // MARK: - 数据
 
     private var dataTab: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            GlassPanel {
-                VStack(alignment: .leading, spacing: 16) {
-                    LabeledField("导出") {
-                        Button { startExport() } label: {
-                            Label("导出备份…", systemImage: "square.and.arrow.up")
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                GlassPanel {
+                    VStack(alignment: .leading, spacing: 16) {
+                        LabeledField("导出") {
+                            Button { startExport() } label: {
+                                Label("导出备份…", systemImage: "square.and.arrow.up")
+                            }
+                            .buttonStyle(.bordered)
                         }
-                        .buttonStyle(.bordered)
-                    }
-
-                    Divider()
-
-                    VStack(alignment: .leading, spacing: 10) {
-                        Text("导入")
-                            .font(.subheadline).foregroundStyle(.secondary)
-                        Picker("", selection: $importMode) {
-                            Text("合并").tag(CropStore.ImportMode.merge)
-                            Text("替换").tag(CropStore.ImportMode.replace)
-                        }
-                        .pickerStyle(.segmented)
-                        .labelsHidden()
-                        .frame(width: 220)
-
-                        Text(importMode == .merge
-                             ? "合并：同 id 的记录被备份覆盖，本地没有的记录追加到末尾。若备份就是本机导出的那份，内容会完全一致、界面看不出变化。"
-                             : "替换：清空当前全部记录与蔬菜，完全采用备份内容。")
-                            .font(.caption).foregroundStyle(.secondary)
-                            .fixedSize(horizontal: false, vertical: true)
-
-                        Button { showImporter = true } label: {
-                            Label("导入备份…", systemImage: "square.and.arrow.down")
-                        }
-                        .buttonStyle(.bordered)
-                        .help("从之前导出的 JSON 备份文件恢复")
 
                         Divider()
-                            .padding(.vertical, 4)
 
-                        Text("从远程地址导入")
-                            .font(.subheadline)
-                        Text("可填写电脑导出的备份地址，在手机或电脑上读取同一份 JSON。")
+                        VStack(alignment: .leading, spacing: 10) {
+                            Text("上传到共享目录")
+                                .font(.subheadline).foregroundStyle(.secondary)
+                            Text("上传文件名：\(CropStore.sourceBackupFileName)。固定导入地址：\(CropStore.sourceBackupURLString)。仅在可信局域网内使用。")
+                                .font(.caption).foregroundStyle(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                            Text("接口不会覆盖文件：若同名文件已存在，服务器会自动追加序号，固定导入地址仍指向原文件。")
+                                .font(.caption).foregroundStyle(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                            Button {
+                                Task { await uploadCurrentBackup() }
+                            } label: {
+                                if isUploadingBackup {
+                                    ProgressView()
+                                        .controlSize(.small)
+                                        .frame(width: 140)
+                                } else {
+                                    Label("上传当前备份", systemImage: "arrow.up.doc")
+                                }
+                            }
+                            .buttonStyle(.bordered)
+                            .disabled(isUploadingBackup)
+                        }
+
+                        Divider()
+
+                        VStack(alignment: .leading, spacing: 10) {
+                            Text("导入")
+                                .font(.subheadline).foregroundStyle(.secondary)
+                            Picker("", selection: $importMode) {
+                                Text("合并").tag(CropStore.ImportMode.merge)
+                                Text("替换").tag(CropStore.ImportMode.replace)
+                            }
+                            .pickerStyle(.segmented)
+                            .labelsHidden()
+                            .frame(width: 220)
+
+                            Text(importMode == .merge
+                                 ? "合并：同 id 的记录被备份覆盖，本地没有的记录追加到末尾。若备份就是本机导出的那份，内容会完全一致、界面看不出变化。"
+                                 : "替换：清空当前全部记录与蔬菜，完全采用备份内容。")
+                                .font(.caption).foregroundStyle(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+
+                            Button { showImporter = true } label: {
+                                Label("导入备份…", systemImage: "square.and.arrow.down")
+                            }
+                            .buttonStyle(.bordered)
+                            .help("从之前导出的 JSON 备份文件恢复")
+
+                            Divider()
+                                .padding(.vertical, 4)
+
+                            Text("从远程地址导入")
+                                .font(.subheadline)
+                            Text("固定地址供 Mac 和 iPhone 导入；设备需在可访问共享目录的网络中。")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                            Text(CropStore.defaultRemoteBackupURLString)
+                                .font(.caption.monospaced())
+                                .textSelection(.enabled)
+                                .fixedSize(horizontal: false, vertical: true)
+                            Button {
+                                startRemoteImport()
+                            } label: {
+                                if isImportingRemoteBackup {
+                                    ProgressView()
+                                        .controlSize(.small)
+                                        .frame(width: 120)
+                                } else {
+                                    Label("从网址导入", systemImage: "arrow.down.doc")
+                                }
+                            }
+                            .buttonStyle(.bordered)
+                            .disabled(isImportingRemoteBackup)
+                        }
+                    }
+                }
+
+                GlassPanel {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("当前数据")
+                            .font(.subheadline).foregroundStyle(.secondary)
+                        Text("收菜记录 \(recordCount) 条 · 蔬菜 \(presets.count) 个（内置 \(presets.count - customCount) + 自定义 \(customCount)）")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
-                        TextField("HTTPS 备份地址", text: $remoteBackupURL)
-                            .textFieldStyle(.roundedBorder)
-                            .disabled(isImportingRemoteBackup)
-                        Button {
-                            startRemoteImport()
-                        } label: {
-                            if isImportingRemoteBackup {
-                                ProgressView()
-                                    .controlSize(.small)
-                                    .frame(width: 120)
-                            } else {
-                                Label("从网址导入", systemImage: "arrow.down.doc")
-                            }
-                        }
-                        .buttonStyle(.bordered)
-                        .disabled(isImportingRemoteBackup)
+                        Text("存储位置：\(CropStore.storageRoot.path)")
+                            .font(.caption2)
+                            .foregroundStyle(.tertiary)
+                            .textSelection(.enabled)
+                            .fixedSize(horizontal: false, vertical: true)
                     }
                 }
-            }
 
-            GlassPanel {
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("当前数据")
-                        .font(.subheadline).foregroundStyle(.secondary)
-                    Text("收菜记录 \(recordCount) 条 · 蔬菜 \(presets.count) 个（内置 \(presets.count - customCount) + 自定义 \(customCount)）")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                    Text("存储位置：\(CropStore.storageRoot.path)")
-                        .font(.caption2)
-                        .foregroundStyle(.tertiary)
-                        .textSelection(.enabled)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
             }
-
-            Spacer(minLength: 0)
+            .padding(.bottom, 4)
         }
+        .scrollIndicators(.hidden)
     }
 
     // MARK: - 辅助
@@ -491,10 +521,9 @@ struct CropManagerSheet: View {
     }
 
     private func startRemoteImport() {
-        guard let url = URL(string: remoteBackupURL.trimmingCharacters(in: .whitespacesAndNewlines)),
-              url.scheme?.lowercased() == "https",
-              url.host != nil else {
-            show("请输入有效的 HTTPS 备份地址。", isError: true)
+        guard let url = URL(string: CropStore.defaultRemoteBackupURLString),
+              CropStore.isAllowedRemoteBackupURL(url) else {
+            show("请输入有效的 HTTPS 地址，或上传接口返回的局域网下载地址。", isError: true)
             return
         }
 
@@ -526,11 +555,24 @@ struct CropManagerSheet: View {
         }
     }
 
-    private static func stamp() -> String {
-        let f = DateFormatter()
-        f.dateFormat = "yyyyMMdd-HHmmss"
-        return f.string(from: Date())
+    @MainActor
+    private func uploadCurrentBackup() async {
+        isUploadingBackup = true
+        defer { isUploadingBackup = false }
+
+        do {
+            let data = try CropStore.exportBackupJSON()
+            let result = try await SourceFileUploader.uploadBackup(data: data)
+            if result.fileName == CropStore.sourceBackupFileName {
+                show("上传成功：\(result.fileName)，可从固定地址导入。")
+            } else {
+                show("上传成功，但服务器因同名自动保存为 \(result.fileName)；固定地址仍指向旧文件。接口不支持覆盖，请联系管理员提供固定文件更新方式。", isError: true)
+            }
+        } catch {
+            show("上传失败：\(error.localizedDescription)", isError: true)
+        }
     }
+
 }
 
 /// `.fileExporter` 需要的文档包装：内容就是 CropStore 产出的备份 JSON
