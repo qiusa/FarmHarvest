@@ -1,14 +1,22 @@
 import WidgetKit
 import SwiftUI
+import AppIntents
+import os.log
 
 struct FarmEntry: TimelineEntry {
     let date: Date
     let records: [CropRecord]
+    let pageIndex: Int
 }
 
 struct Provider: TimelineProvider {
+    private static let logger = Logger(
+        subsystem: "com.yixin.farmharvest",
+        category: "WidgetTimeline"
+    )
+
     func placeholder(in context: Context) -> FarmEntry {
-        FarmEntry(date: Date(), records: CropStore.load())
+        FarmEntry(date: Date(), records: CropStore.load(), pageIndex: Self.savedPageIndex)
     }
     func getSnapshot(in context: Context, completion: @escaping (FarmEntry) -> Void) {
         if context.isPreview {
@@ -20,31 +28,29 @@ struct Provider: TimelineProvider {
                                date: now.addingTimeInterval(Double(p.minutes * 60)))],
                            note: nil)
             }
-            completion(FarmEntry(date: now, records: preview))
+            completion(FarmEntry(date: now, records: preview, pageIndex: Self.savedPageIndex))
         } else {
-            completion(FarmEntry(date: Date(), records: CropStore.load()))
+            completion(FarmEntry(date: Date(), records: CropStore.load(), pageIndex: Self.savedPageIndex))
         }
     }
 
     func getTimeline(in context: Context, completion: @escaping (Timeline<FarmEntry>) -> Void) {
         let records = CropStore.load()
         let now = Date()
-        var entries: [FarmEntry] = []
+        let pageIndex = Self.savedPageIndex
+        Self.logger.info(
+            "Providing timeline: pageIndex=\(pageIndex, privacy: .public), records=\(records.count, privacy: .public)"
+        )
 
-        // 每分钟刷新一次，覆盖到最远收获时间（最多 6 小时）。
-        // 必须取 allHarvests 的最大值：一���记录有多次采收时，最后一茬
-        // 才是真正的时间下界，只看 harvestAt 会导致后面几茬不刷新。
-        let horizon = records.flatMap(\.allHarvests).max() ?? now.addingTimeInterval(3600)
-        let end = min(horizon, now.addingTimeInterval(6 * 3600))
-        var t = now
-        while t <= end {
-            entries.append(FarmEntry(date: t, records: records))
-            t.addTimeInterval(60)
-        }
-        if entries.isEmpty {
-            entries = [FarmEntry(date: now, records: records)]
-        }
-        completion(Timeline(entries: entries, policy: .after(end.addingTimeInterval(60))))
+        // Interactive widget intents trigger a timeline reload when they finish.
+        // Keep the archive to one entry so each tap doesn't serialize hundreds
+        // of near-identical entries before the updated page can be displayed.
+        let entry = FarmEntry(date: now, records: records, pageIndex: pageIndex)
+        completion(Timeline(entries: [entry], policy: .after(now.addingTimeInterval(60))))
+    }
+
+    private static var savedPageIndex: Int {
+        WidgetPageNavigation.currentPageIndex
     }
 }
 
@@ -54,11 +60,47 @@ struct FarmHarvestWidgetEntryView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text("农场收菜").font(.headline).padding(.bottom, 2)
+            HStack(spacing: 6) {
+                Text("农场收菜").font(.headline)
+                Spacer(minLength: 2)
+                if totalPages > 1 {
+                    Text("\(currentPage + 1)/\(totalPages)")
+                        .font(.caption2.weight(.semibold).monospacedDigit())
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, 8)
+                        .frame(height: 26)
+                        .background(Color.primary.opacity(0.07), in: Capsule())
+
+                    Button(intent: PreviousWidgetPageIntent()) {
+                        Image(systemName: "chevron.up")
+                            .font(.system(size: 10, weight: .bold))
+                            .foregroundStyle(.secondary)
+                            .frame(width: 26, height: 26)
+                            .background(Color.primary.opacity(0.09), in: Circle())
+                            .overlay(Circle().strokeBorder(Color.primary.opacity(0.07), lineWidth: 0.75))
+                            .contentShape(Circle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("上一页")
+
+                    Button(intent: NextWidgetPageIntent()) {
+                        Image(systemName: "chevron.down")
+                            .font(.system(size: 10, weight: .bold))
+                            .foregroundStyle(.secondary)
+                            .frame(width: 26, height: 26)
+                            .background(Color.primary.opacity(0.09), in: Circle())
+                            .overlay(Circle().strokeBorder(Color.primary.opacity(0.07), lineWidth: 0.75))
+                            .contentShape(Circle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("下一页")
+                }
+            }
+            .padding(.bottom, 2)
             if entry.records.isEmpty {
                 Text("暂无记录").font(.caption).foregroundStyle(.secondary)
             } else {
-                ForEach(Array(entry.records.prefix(limit))) { r in
+                ForEach(pageRecords) { r in
                     FarmRow(r: r, now: entry.date, single: family == .systemSmall)
                 }
             }
@@ -76,9 +118,23 @@ struct FarmHarvestWidgetEntryView: View {
     private var limit: Int {
         switch family {
         case .systemSmall: return 1
-        case .systemMedium: return fitCount(budget: 105)
-        default: return fitCount(budget: 295)
+        case .systemMedium: return fitCount(budget: 90)
+        default: return fitCount(budget: 280)
         }
+    }
+
+    private var totalPages: Int {
+        guard limit > 0 else { return 1 }
+        return max(1, (entry.records.count + limit - 1) / limit)
+    }
+
+    private var currentPage: Int {
+        let page = entry.pageIndex % totalPages
+        return page >= 0 ? page : page + totalPages
+    }
+
+    private var pageRecords: [CropRecord] {
+        Array(entry.records.dropFirst(currentPage * limit).prefix(limit))
     }
 
     /// 逐条累加估算行高，超出预算即停（估算与 FarmRow 实际布局对应，宁少勿裁）
@@ -215,7 +271,7 @@ struct FarmHarvestWidget: Widget {
             FarmHarvestWidgetEntryView(entry: entry)
         }
         .configurationDisplayName("农场收菜")
-        .description("记录蔬菜收菜时间，桌面实时倒计时。")
+        .description("记录蔬菜收菜时间，使用上下箭头翻页浏览，桌面实时倒计时。")
         .supportedFamilies([.systemSmall, .systemMedium, .systemLarge])
     }
 }

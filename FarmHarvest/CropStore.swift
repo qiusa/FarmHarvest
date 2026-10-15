@@ -155,6 +155,14 @@ enum CropStore {
     static let storageRoot: URL = {
         if let u = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: appGroup),
            Self.isWritable(u) {
+            // The macOS app previously fell back to its private Application Support
+            // directory when it lacked the App Group entitlement. Move/merge that
+            // data once so enabling the shared container doesn't make existing
+            // records disappear. The widget has a separate .appex bundle and must
+            // not claim the one-time migration before the containing app runs.
+            if Bundle.main.bundleURL.pathExtension != "appex" {
+                Self.migrateLegacyDataIfNeeded(to: u)
+            }
             return u
         }
         let fallback = FileManager.default
@@ -163,6 +171,63 @@ enum CropStore {
         try? FileManager.default.createDirectory(at: fallback, withIntermediateDirectories: true)
         return fallback
     }()
+
+    private static func migrateLegacyDataIfNeeded(to sharedRoot: URL) {
+        let fileManager = FileManager.default
+        let marker = sharedRoot.appendingPathComponent(".legacy-local-store-migrated")
+        guard !fileManager.fileExists(atPath: marker.path) else { return }
+
+        let legacyRoot = fileManager
+            .urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("FarmHarvest", isDirectory: true)
+
+        do {
+            try migrateJSONFile("records.json", from: legacyRoot, to: sharedRoot)
+            try migrateJSONFile("customCrops.json", from: legacyRoot, to: sharedRoot)
+            try migrateJSONFile("hiddenBuiltins.json", from: legacyRoot, to: sharedRoot)
+            try Data("1".utf8).write(to: marker, options: .atomic)
+        } catch {
+            // Keep the source files untouched and retry on the next app launch.
+            diag("旧本地数据迁移失败：\(error.localizedDescription)")
+        }
+    }
+
+    /// Merge old local data into the shared copy, preferring the old local value
+    /// for duplicate IDs while retaining entries that already exist only in the
+    /// shared container. The old files are intentionally left in place as backup.
+    private static func migrateJSONFile(_ name: String, from legacyRoot: URL,
+                                        to sharedRoot: URL) throws {
+        let fileManager = FileManager.default
+        let legacyURL = legacyRoot.appendingPathComponent(name)
+        guard fileManager.fileExists(atPath: legacyURL.path) else { return }
+
+        let sharedURL = sharedRoot.appendingPathComponent(name)
+        let legacyData = try Data(contentsOf: legacyURL)
+        let sharedData = try? Data(contentsOf: sharedURL)
+        let encoder = JSONEncoder()
+        let mergedData: Data
+
+        switch name {
+        case "records.json":
+            let legacy = try JSONDecoder().decode([CropRecord].self, from: legacyData)
+            let shared = try sharedData.map { try JSONDecoder().decode([CropRecord].self, from: $0) } ?? []
+            let legacyIDs = Set(legacy.map(\.id))
+            mergedData = try encoder.encode(legacy + shared.filter { !legacyIDs.contains($0.id) })
+        case "customCrops.json":
+            let legacy = try JSONDecoder().decode([CropPreset].self, from: legacyData)
+            let shared = try sharedData.map { try JSONDecoder().decode([CropPreset].self, from: $0) } ?? []
+            let legacyIDs = Set(legacy.map(\.id))
+            mergedData = try encoder.encode(legacy + shared.filter { !legacyIDs.contains($0.id) })
+        case "hiddenBuiltins.json":
+            let legacy = try JSONDecoder().decode([String].self, from: legacyData)
+            let shared = try sharedData.map { try JSONDecoder().decode([String].self, from: $0) } ?? []
+            mergedData = try encoder.encode(Array(Set(legacy).union(shared)).sorted())
+        default:
+            return
+        }
+
+        try mergedData.write(to: sharedURL, options: .atomic)
+    }
 
     /// 目录写探测：真写一个临时文件再删掉，比看路径是否存在可靠得多
     private static func isWritable(_ dir: URL) -> Bool {
