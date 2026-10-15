@@ -259,7 +259,9 @@ struct ContentView: View {
     @State private var inputCollapsed: Bool = false
     @State private var widthBeforeCompact: CGFloat?
     private let compactRecordsBreakpoint: CGFloat = 520
+    private let compactRecordsHeightBreakpoint: CGFloat = 520
     private let compactWindowMinimumWidth: CGFloat = 260
+    private let compactWindowMinimumHeight: CGFloat = 420
 
     private var selectedPreset: CropPreset? {
         presets.first { $0.id == selectedPresetID }
@@ -313,8 +315,8 @@ struct ContentView: View {
             // 左右分栏：左侧录入、右侧收菜记录，首屏即可看到记录。
             // 左侧可折叠：记录多的时候收起，把宽度全让给记录区。
             GeometryReader { geometry in
-                let compactRecords = inputCollapsed
-                    && geometry.size.width < compactRecordsBreakpoint
+                let compactRecords = geometry.size.height < compactRecordsHeightBreakpoint
+                    || (inputCollapsed && geometry.size.width < compactRecordsBreakpoint)
 
                 HStack(alignment: .top, spacing: 0) {
                     if inputCollapsed {
@@ -379,12 +381,13 @@ struct ContentView: View {
         .background {
             WindowMinimumSizeConfigurator(
                 minWidth: inputCollapsed ? compactWindowMinimumWidth : 900,
-                minHeight: 620
+                minHeight: compactWindowMinimumHeight
             )
             .frame(width: 1, height: 1)
             .hidden()
         }
-        .frame(minWidth: inputCollapsed ? compactWindowMinimumWidth : 900, minHeight: 620)
+        .frame(minWidth: inputCollapsed ? compactWindowMinimumWidth : 900,
+               minHeight: compactWindowMinimumHeight)
         .confirmationDialog("清除 \(readyCount) 条已收获的记录？",
                             isPresented: $clearReadyConfirm, titleVisibility: .visible) {
             Button("清除", role: .destructive) { clearReadyRecords() }
