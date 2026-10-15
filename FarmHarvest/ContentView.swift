@@ -838,9 +838,8 @@ struct RecordRow: View {
                 }
 
                 if let note = r.note, !note.isEmpty {
-                    NotePresets.highlighted(note)
+                    NotePresetRecordNote(note: note)
                         .font(.caption2)
-                        .lineLimit(2)
                 }
             }
             Spacer(minLength: 4)
@@ -986,16 +985,9 @@ struct EditRecordSheet: View {
     let onSave: (CropRecord) -> Void
     @Environment(\.dismiss) private var dismiss
 
-    /// 新增一茬时的录入方式。
-    /// - afterLast：以现有最晚一茬为基准，「每隔两天再续一次」只需填间隔
-    /// - fromNow：**从当前时刻起算**，不受上一茬时间影响。
-    ///   续期场景常用：第一茬今天收完了，现在重新种一棵，N 小时后再收。
-    ///   跟 afterLast 的区别在基准不同——上一茬可能是好几天前，
-    ///   afterLast 会算出已经过去的时间，fromNow 才是「从现在起」。
-    /// - absoluteDate：直接挑绝对日期时间
+    /// 新增一茬时可从现在起按时长计算，或指定绝对日期时间。
     enum NewMode: String, CaseIterable, Identifiable {
-        case afterLast = "在上一茬之后"
-        case fromNow = "从当前起算"
+        case fromNow = "从现在起"
         case absoluteDate = "按指定时间"
         var id: String { rawValue }
 
@@ -1012,7 +1004,7 @@ struct EditRecordSheet: View {
     @State private var pendingCycleDelete: HarvestCycle? = nil
 
     // 新增一茬的表单
-    @State private var newMode: NewMode = .afterLast
+    @State private var newMode: NewMode = .fromNow
     @State private var newHoursText: String = "1"
     @State private var newMinutesText: String = "0"
     @State private var newDate: Date = Date()
@@ -1033,15 +1025,8 @@ struct EditRecordSheet: View {
         return h * 60 + m
     }
 
-    /// 「在上一茬之后」的基准：现有最晚一茬；一茬都没有就用种下时间
-    private var lastHarvestDate: Date {
-        harvests.map(\.date).max() ?? record.plantedAt
-    }
-
     private var previewNewDate: Date {
         switch newMode {
-        case .afterLast:
-            return lastHarvestDate.addingTimeInterval(TimeInterval(newTotalMinutes * 60))
         case .fromNow:
             return Date().addingTimeInterval(TimeInterval(newTotalMinutes * 60))
         case .absoluteDate:
@@ -1049,23 +1034,11 @@ struct EditRecordSheet: View {
         }
     }
 
-    /// 说明当前模式下的基准是什么，避免用户算错
-    private var newModeHint: String? {
-        switch newMode {
-        case .afterLast:
-            return "以上一茬 \(fmt(lastHarvestDate)) 为基准"
-        case .fromNow:
-            return "从现在（\(fmt(Date()))）起算"
-        case .absoluteDate:
-            return nil
-        }
-    }
-
     /// 「添加」按钮的可用性：算出来的时间必须晚于现在。
     /// 否则会往列表里塞一个已经过期的茬，界面上立刻变成「可收」，没意义。
     private var canAddCycle: Bool {
         switch newMode {
-        case .afterLast, .fromNow:
+        case .fromNow:
             return newTotalMinutes > 0
         case .absoluteDate:
             return newDate > Date()
@@ -1207,7 +1180,6 @@ struct EditRecordSheet: View {
                     .frame(maxWidth: 420)
 
                     HStack(spacing: 8) {
-                        // afterLast 和 fromNow 都是「填间隔」，只是基准不同
                         if newMode.usesDuration {
                             TextField("1", text: $newHoursText)
                                 .textFieldStyle(.roundedBorder)
@@ -1219,7 +1191,7 @@ struct EditRecordSheet: View {
                                 .frame(width: 66)
                                 .multilineTextAlignment(.trailing)
                             Text("分钟").font(.subheadline).foregroundStyle(.secondary)
-                            Text("→ \(fmt(previewNewDate))")
+                            Text("从现在起 · \(fmt(previewNewDate))")
                                 .font(.caption).foregroundStyle(.tint).monospacedDigit()
                         } else {
                             DatePicker("", selection: $newDate,
@@ -1237,12 +1209,6 @@ struct EditRecordSheet: View {
                         .disabled(!canAddCycle)
                     }
 
-                    // 说明当前 tab 从哪算起 —— afterLast 和 fromNow 基准不同，
-                    // 不写清楚用户会以为「在上一茬之后」=「现在」
-                    if let hint = newModeHint {
-                        Text(hint)
-                            .font(.caption2).foregroundStyle(.tertiary)
-                    }
                 }
             }
         }
@@ -1341,8 +1307,15 @@ struct EditRecordSheet: View {
     @State private var adjustingID: String?
     @State private var adjustHoursText: String = "1"
     @State private var adjustMinutesText: String = "0"
+    @State private var adjustBasis: AdjustBasis = .fromNow
     /// 负数表示往前拨，正数往后
     @State private var adjustDirection: AdjustDirection = .later
+
+    enum AdjustBasis: String, CaseIterable, Identifiable {
+        case currentCycle = "基于原时间"
+        case fromNow = "从现在起"
+        var id: String { rawValue }
+    }
 
     enum AdjustDirection: String, CaseIterable, Identifiable {
         case later = "往后延"
@@ -1355,6 +1328,7 @@ struct EditRecordSheet: View {
         adjustingID = id
         adjustHoursText = "1"
         adjustMinutesText = "0"
+        adjustBasis = .fromNow
         adjustDirection = .later
     }
 
@@ -1362,12 +1336,22 @@ struct EditRecordSheet: View {
         adjustingID = nil
     }
 
-    /// 面板里的调整量（分钟），非法输入按 0 处理
-    private var adjustTotalMinutes: Int {
-        let h = max(0, Int(adjustHoursText.trimmingCharacters(in: .whitespaces)) ?? 0)
-        let m = max(0, Int(adjustMinutesText.trimmingCharacters(in: .whitespaces)) ?? 0)
-        let total = h * 60 + m
-        return adjustDirection == .later ? total : -total
+    /// 面板里的调整时长（分钟）；非法、负数、溢出或零时长均不允许应用。
+    private var adjustDurationMinutes: Int? {
+        guard let hours = Int(adjustHoursText.trimmingCharacters(in: .whitespaces)),
+              let minutes = Int(adjustMinutesText.trimmingCharacters(in: .whitespaces)),
+              hours >= 0, minutes >= 0 else { return nil }
+        let (hourMinutes, overflow1) = hours.multipliedReportingOverflow(by: 60)
+        let (total, overflow2) = hourMinutes.addingReportingOverflow(minutes)
+        guard !overflow1, !overflow2, total > 0 else { return nil }
+        return total
+    }
+
+    private func adjustedDate(for cycle: HarvestCycle) -> Date? {
+        guard let duration = adjustDurationMinutes else { return nil }
+        let base = adjustBasis == .fromNow ? Date() : cycle.date
+        let direction = adjustBasis == .fromNow || adjustDirection == .later ? 1.0 : -1.0
+        return base.addingTimeInterval(TimeInterval(duration) * 60 * direction)
     }
 
     @ViewBuilder
@@ -1381,11 +1365,19 @@ struct EditRecordSheet: View {
                     .font(.caption).foregroundStyle(.secondary)
             }
 
-            Picker("", selection: $adjustDirection) {
-                ForEach(AdjustDirection.allCases) { Text($0.rawValue).tag($0) }
+            Picker("起算方式", selection: $adjustBasis) {
+                ForEach(AdjustBasis.allCases) { Text($0.rawValue).tag($0) }
             }
             .labelsHidden()
             .pickerStyle(.segmented)
+
+            if adjustBasis == .currentCycle {
+                Picker("调整方向", selection: $adjustDirection) {
+                    ForEach(AdjustDirection.allCases) { Text($0.rawValue).tag($0) }
+                }
+                .labelsHidden()
+                .pickerStyle(.segmented)
+            }
 
             HStack(spacing: 8) {
                 TextField("1", text: $adjustHoursText)
@@ -1401,9 +1393,10 @@ struct EditRecordSheet: View {
                 Spacer(minLength: 0)
             }
 
-            if adjustTotalMinutes != 0, let c = cur {
-                let newDate = c.date.addingTimeInterval(TimeInterval(adjustTotalMinutes * 60))
-                Text("→ \(fmt(newDate))")
+            if let c = cur, let newDate = adjustedDate(for: c) {
+                Text(adjustBasis == .fromNow
+                     ? "从现在起 → \(fmt(newDate))"
+                     : "→ \(fmt(newDate))")
                     .font(.caption).foregroundStyle(.tint).monospacedDigit()
             }
 
@@ -1415,7 +1408,7 @@ struct EditRecordSheet: View {
                     closeAdjust()
                 }
                 .keyboardShortcut(.defaultAction)
-                .disabled(adjustTotalMinutes == 0)
+                .disabled(adjustDurationMinutes == nil)
             }
         }
         .padding(16)
@@ -1424,8 +1417,8 @@ struct EditRecordSheet: View {
 
     private func applyAdjust(for id: String) {
         guard let i = harvests.firstIndex(where: { $0.id == id }) else { return }
-        harvests[i].date = harvests[i].date
-            .addingTimeInterval(TimeInterval(adjustTotalMinutes * 60))
+        guard let newDate = adjustedDate(for: harvests[i]) else { return }
+        harvests[i].date = newDate
         // 调整后时间顺序可能变了，保持列表始终按时间先后展示
         harvests.sort { $0.date < $1.date }
     }
@@ -1435,7 +1428,7 @@ struct EditRecordSheet: View {
         harvests.append(HarvestCycle(date: d))
         // 用户可能往回加时间，列表始终按时间先后展示
         harvests.sort { $0.date < $1.date }
-        // 下一轮「在上一茬之后」以刚加的为准，连续续期不用重算
+        // 保留新增时间，切换到「按指定时间」时可直接沿用
         newDate = d
     }
 
@@ -1615,7 +1608,6 @@ struct FlowLayout: Layout {
         }
     }
 }
-
 
 #Preview {
     ContentView()

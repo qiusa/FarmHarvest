@@ -134,9 +134,8 @@ struct FarmRow: View {
                 if let note = r.note, !note.isEmpty {
                     // 与主界面记录行同一渲染（NotePresets.highlighted）：
                     // 命中分组的词组色 + 色点，其余灰色，保证两端展示一致
-                    NotePresets.highlighted(note)
+                    NotePresetRecordNote(note: note)
                         .font(.caption2)
-                        .lineLimit(2)
                 }
             }
             Spacer(minLength: 2)

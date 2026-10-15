@@ -601,12 +601,6 @@ private struct PhoneRecordRow: View {
 
                 VStack(alignment: .leading, spacing: 2) {
                     Text(record.name).font(.headline)
-                    if let note = record.note, !note.isEmpty {
-                        Text(note)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                            .lineLimit(2)
-                    }
                 }
                 Spacer()
                 Button(action: onEdit) {
@@ -620,6 +614,11 @@ private struct PhoneRecordRow: View {
                 }
                 .buttonStyle(.bordered)
                 .accessibilityLabel("续种 \(record.name)")
+            }
+
+            if let note = record.note, !note.isEmpty {
+                NotePresetRecordNote(note: note)
+                    .font(.caption)
             }
 
             ForEach(
@@ -667,14 +666,15 @@ private struct PhoneEditRecordSheet: View {
     @State private var name: String
     @State private var note: String
     @State private var harvests: [HarvestCycle]
-    @State private var newMode: NewCycleMode = .afterLast
+    @State private var newMode: NewCycleMode = .fromNow
     @State private var hoursText = "1"
     @State private var minutesText = "0"
     @State private var newDate: Date
     @State private var pendingCycleDelete: HarvestCycle?
+    @State private var cycleAdjustmentHours: [String: String] = [:]
+    @State private var cycleAdjustmentMinutes: [String: String] = [:]
 
     private enum NewCycleMode: String, CaseIterable, Identifiable {
-        case afterLast = "上茬之后"
         case fromNow = "从现在起"
         case absoluteDate = "指定时间"
 
@@ -702,15 +702,8 @@ private struct PhoneEditRecordSheet: View {
         return total
     }
 
-    private var lastHarvestDate: Date {
-        harvests.map(\.date).max() ?? record.plantedAt
-    }
-
     private var previewDate: Date? {
         switch newMode {
-        case .afterLast:
-            guard let durationMinutes else { return nil }
-            return lastHarvestDate.addingTimeInterval(TimeInterval(durationMinutes * 60))
         case .fromNow:
             guard let durationMinutes else { return nil }
             return Date().addingTimeInterval(TimeInterval(durationMinutes * 60))
@@ -762,6 +755,40 @@ private struct PhoneEditRecordSheet: View {
                                 selection: $cycle.date,
                                 displayedComponents: [.date, .hourAndMinute]
                             )
+                            DisclosureGroup("从现在起调整") {
+                                HStack(spacing: 8) {
+                                    TextField(
+                                        "1",
+                                        text: cycleAdjustmentHoursBinding(for: cycle.id)
+                                    )
+                                    .keyboardType(.numberPad)
+                                    .multilineTextAlignment(.trailing)
+                                    .frame(maxWidth: 70)
+                                    Text("小时")
+                                        .foregroundStyle(.secondary)
+                                    TextField(
+                                        "0",
+                                        text: cycleAdjustmentMinutesBinding(for: cycle.id)
+                                    )
+                                    .keyboardType(.numberPad)
+                                    .multilineTextAlignment(.trailing)
+                                    .frame(maxWidth: 70)
+                                    Text("分钟")
+                                        .foregroundStyle(.secondary)
+                                }
+
+                                if let preview = cycleAdjustmentPreview(for: cycle.id) {
+                                    Text("从现在起 → \(fmt(preview))")
+                                        .font(.footnote)
+                                        .foregroundStyle(.secondary)
+                                        .monospacedDigit()
+                                }
+
+                                Button("按此时间设置") {
+                                    applyCycleAdjustment(for: cycle.id)
+                                }
+                                .disabled(cycleAdjustmentDuration(for: cycle.id) == nil)
+                            }
                             Toggle("已采收", isOn: $cycle.harvested)
                             HStack {
                                 TimelineView(.periodic(from: .now, by: 1)) { context in
@@ -824,11 +851,9 @@ private struct PhoneEditRecordSheet: View {
                     }
 
                     if let previewDate {
-                        Text(newMode == .afterLast
-                             ? "以上一茬 \(fmt(lastHarvestDate)) 为基准 · \(fmt(previewDate))"
-                             : (newMode == .fromNow
-                                ? "从现在起算 · \(fmt(previewDate))"
-                                : "预计收菜：\(fmt(previewDate))"))
+                        Text(newMode == .fromNow
+                             ? "从现在起 · \(fmt(previewDate))"
+                             : "预计收菜：\(fmt(previewDate))")
                             .font(.footnote)
                             .foregroundStyle(.secondary)
                     }
@@ -884,6 +909,42 @@ private struct PhoneEditRecordSheet: View {
             }
         }
         .presentationDetents([.large])
+    }
+
+    private func cycleAdjustmentHoursBinding(for id: String) -> Binding<String> {
+        Binding(
+            get: { cycleAdjustmentHours[id] ?? "1" },
+            set: { cycleAdjustmentHours[id] = $0 }
+        )
+    }
+
+    private func cycleAdjustmentMinutesBinding(for id: String) -> Binding<String> {
+        Binding(
+            get: { cycleAdjustmentMinutes[id] ?? "0" },
+            set: { cycleAdjustmentMinutes[id] = $0 }
+        )
+    }
+
+    private func cycleAdjustmentDuration(for id: String) -> Int? {
+        guard let hours = Int((cycleAdjustmentHours[id] ?? "1").trimmingCharacters(in: .whitespaces)),
+              let minutes = Int((cycleAdjustmentMinutes[id] ?? "0").trimmingCharacters(in: .whitespaces)),
+              hours >= 0, minutes >= 0 else { return nil }
+        let (hourMinutes, overflow1) = hours.multipliedReportingOverflow(by: 60)
+        let (total, overflow2) = hourMinutes.addingReportingOverflow(minutes)
+        guard !overflow1, !overflow2, total > 0 else { return nil }
+        return total
+    }
+
+    private func cycleAdjustmentPreview(for id: String) -> Date? {
+        guard let duration = cycleAdjustmentDuration(for: id) else { return nil }
+        return Date().addingTimeInterval(TimeInterval(duration) * 60)
+    }
+
+    private func applyCycleAdjustment(for id: String) {
+        guard let index = harvests.firstIndex(where: { $0.id == id }),
+              let preview = cycleAdjustmentPreview(for: id) else { return }
+        harvests[index].date = preview
+        harvests.sort { $0.date < $1.date }
     }
 
     private func addCycle() {

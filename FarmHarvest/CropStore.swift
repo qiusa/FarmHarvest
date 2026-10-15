@@ -699,6 +699,55 @@ enum NotePresets {
         }
         return Text(result)
     }
+
+    /// 记录列表里的备注按类别拆成两行：种子在第一行，树苗在第二行。
+    /// 未识别的自由文本保留在第一行；没有任何预选标签时原样显示。
+    static func recordRows(for note: String) -> [String] {
+        let delimiters = CharacterSet(charactersIn: "、，,;；。")
+        let tokens = note.components(separatedBy: delimiters)
+            .flatMap { $0.components(separatedBy: .whitespacesAndNewlines) }
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        let seedIDs = Set(seeds.flatMap {
+            [$0.id, $0.id.replacingOccurrences(of: "种子", with: "")]
+        } + ["雪菲花"])
+        let seedlingIDs = Set(seedlings.flatMap {
+            [
+                $0.id,
+                $0.id.replacingOccurrences(of: "树苗", with: "")
+                    .replacingOccurrences(of: "苗", with: "")
+            ]
+        } + ["老山颤"])
+        let hasPreset = tokens.contains { seedIDs.contains($0) || seedlingIDs.contains($0) }
+        guard hasPreset else { return [note] }
+
+        let seedAndOtherTokens = tokens.filter { !seedlingIDs.contains($0) }
+        let seedlingTokens = tokens.filter { seedlingIDs.contains($0) }
+        return [
+            seedAndOtherTokens.joined(separator: "、"),
+            seedlingTokens.joined(separator: "、")
+        ]
+        .filter { !$0.isEmpty }
+    }
+}
+
+/// 收菜记录中的备注按「种子 / 树苗」分成两行，并沿用分组高亮。
+struct NotePresetRecordNote: View {
+    let note: String
+
+    private var rows: [String] {
+        NotePresets.recordRows(for: note)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 1) {
+            ForEach(rows.indices, id: \.self) { index in
+                NotePresets.highlighted(rows[index])
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+            }
+        }
+    }
 }
 
 // MARK: - 时间格式化（主 App 与 Widget 共用，保证两端展示一致）
