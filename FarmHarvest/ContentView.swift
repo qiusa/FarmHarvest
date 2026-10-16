@@ -1544,6 +1544,24 @@ struct EditRecordSheet: View {
         return total
     }
 
+    /// 加减按钮按整个时长逐分钟调整，自动在小时与分钟之间进位/借位。
+    private var stepperDurationMinutes: Int {
+        let hours = max(0, Int(adjustHoursText.trimmingCharacters(in: .whitespaces)) ?? 0)
+        let minutes = max(0, Int(adjustMinutesText.trimmingCharacters(in: .whitespaces)) ?? 0)
+        let (hourMinutes, overflow1) = hours.multipliedReportingOverflow(by: 60)
+        guard !overflow1 else { return Int.max }
+        let (total, overflow2) = hourMinutes.addingReportingOverflow(minutes)
+        return overflow2 ? Int.max : total
+    }
+
+    private func stepAdjustDuration(by minutes: Int) {
+        let (stepped, overflow) = stepperDurationMinutes.addingReportingOverflow(minutes)
+        guard !overflow else { return }
+        let total = max(0, stepped)
+        adjustHoursText = "\(total / 60)"
+        adjustMinutesText = "\(total % 60)"
+    }
+
     private func adjustedDate(for cycle: HarvestCycle) -> Date? {
         guard let duration = adjustDurationMinutes else { return nil }
         let base = adjustBasis == .fromNow ? Date() : cycle.date
@@ -1587,6 +1605,39 @@ struct EditRecordSheet: View {
                     .frame(width: 60)
                     .multilineTextAlignment(.trailing)
                 Text("分钟").font(.subheadline).foregroundStyle(.secondary)
+                VStack(spacing: 0) {
+                    Button {
+                        stepAdjustDuration(by: 1)
+                    } label: {
+                        Image(systemName: "chevron.up")
+                            .font(.system(size: 9, weight: .bold))
+                            .frame(width: 24, height: 15)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .help("增加一分钟")
+                    .accessibilityLabel("增加一分钟")
+
+                    Rectangle()
+                        .fill(Color.primary.opacity(0.12))
+                        .frame(height: 1)
+                        .padding(.horizontal, 4)
+
+                    Button {
+                        stepAdjustDuration(by: -1)
+                    } label: {
+                        Image(systemName: "chevron.down")
+                            .font(.system(size: 9, weight: .bold))
+                            .frame(width: 24, height: 15)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(stepperDurationMinutes == 0)
+                    .help("减少一分钟")
+                    .accessibilityLabel("减少一分钟")
+                }
+                .background(Color.primary.opacity(0.07),
+                            in: RoundedRectangle(cornerRadius: 6, style: .continuous))
                 Spacer(minLength: 0)
             }
 
