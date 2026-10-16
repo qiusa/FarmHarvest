@@ -257,11 +257,13 @@ struct ContentView: View {
     @State private var pendingDelete: CropRecord? = nil
     /// 左侧录入面板是否收起。收起后记录区独占宽度，适合记录多时查看。
     @State private var inputCollapsed: Bool = false
-    @State private var widthBeforeCompact: CGFloat?
+    @State private var isShowingMinimumWindowSize: Bool = false
     private let compactRecordsBreakpoint: CGFloat = 520
     private let compactRecordsHeightBreakpoint: CGFloat = 520
     private let compactWindowMinimumWidth: CGFloat = 260
-    private let compactWindowMinimumHeight: CGFloat = 420
+    private let compactWindowMinimumHeight: CGFloat = 322
+    private let recordsOverviewWidth: CGFloat = 527
+    private let recordsOverviewHeight: CGFloat = 755
 
     private var selectedPreset: CropPreset? {
         presets.first { $0.id == selectedPresetID }
@@ -437,7 +439,7 @@ struct ContentView: View {
             .buttonStyle(.plain)
             .help("展开录入面板")
 
-            Button(action: toggleWindowWidth) {
+            Button(action: toggleWindowSize) {
                 Image(systemName: "arrow.left.and.right")
                     .font(.system(size: compact ? 12 : 13, weight: .semibold))
                     .frame(width: 28, height: 28)
@@ -445,7 +447,7 @@ struct ContentView: View {
                                 in: RoundedRectangle(cornerRadius: 8))
             }
             .buttonStyle(.plain)
-            .help("点击收窄到最小宽度，再点恢复原宽度")
+            .help("点击缩到最小宽高，再点展开五条记录视图")
 
             if !compact {
                 // 收起时仍能看到最要紧的两个数。统计条本身低频刷新（5 秒），
@@ -846,30 +848,27 @@ struct ContentView: View {
         CropStore.reloadWidget()
     }
 
-    /// 在当前宽度与最小宽度之间切换；收窄时记住原宽度，第二次点击恢复。
-    private func toggleWindowWidth() {
+    /// 在最小窗口与五条记录视图之间切换。
+    private func toggleWindowSize() {
         guard let window = NSApp.keyWindow ?? NSApp.mainWindow ?? NSApp.windows.first else {
             return
         }
 
-        let targetWidth: CGFloat
-        if let restoreWidth = widthBeforeCompact {
-            targetWidth = restoreWidth
-            widthBeforeCompact = nil
-        } else if window.frame.width <= compactWindowMinimumWidth + 1 {
-            // 如果窗口重启后已经处于最小宽度，点击仍可恢复到常用宽度。
-            targetWidth = 900
-        } else {
-            widthBeforeCompact = window.frame.width
-            targetWidth = compactWindowMinimumWidth
-        }
+        // State flips before the NSWindow animation starts, so a fast second click
+        // still restores the overview instead of reapplying the minimum size.
+        let isAtMinimumSize = isShowingMinimumWindowSize
+            || (window.frame.width <= compactWindowMinimumWidth + 1
+                && window.frame.height <= compactWindowMinimumHeight + 40)
+        let targetSize = isAtMinimumSize
+            ? CGSize(width: recordsOverviewWidth, height: recordsOverviewHeight)
+            : CGSize(width: compactWindowMinimumWidth, height: compactWindowMinimumHeight)
+        isShowingMinimumWindowSize = !isAtMinimumSize
 
-        var minimumSize = window.minSize
-        minimumSize.width = compactWindowMinimumWidth
-        window.minSize = minimumSize
+        window.minSize = NSSize(width: compactWindowMinimumWidth,
+                                height: compactWindowMinimumHeight)
 
         var frame = window.frame
-        frame.size.width = targetWidth
+        frame.size = targetSize
         window.setFrame(frame, display: true, animate: true)
     }
 }
