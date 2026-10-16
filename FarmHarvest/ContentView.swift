@@ -927,24 +927,7 @@ struct RecordRow: View {
                                 .foregroundStyle(.tertiary)
                         } else {
                             ForEach(r.harvests) { cycle in
-                                let isUrgent = !cycle.harvested
-                                    && cycle.date.timeIntervalSinceNow <= Self.urgentSeconds
-                                let timeTint: Color = cycle.harvested ? .green
-                                    : (isUrgent ? .orange : .secondary)
-
-                                Text(fmt(cycle.date))
-                                    .font(.callout.weight(isUrgent ? .bold : .semibold))
-                                    .monospacedDigit()
-                                    .foregroundStyle(timeTint)
-                                    .lineLimit(1)
-                                    .minimumScaleFactor(0.8)
-                                    .layoutPriority(1)
-                                    .padding(.horizontal, 4)
-                                    .padding(.vertical, 2)
-                                    .background(
-                                        isUrgent ? Color.orange.opacity(0.14) : .clear,
-                                        in: RoundedRectangle(cornerRadius: 5, style: .continuous)
-                                    )
+                                compactTimeBadge(cycle)
                             }
                         }
                     }
@@ -967,8 +950,8 @@ struct RecordRow: View {
         .glassEffect(in: RoundedRectangle(cornerRadius: 16, style: .continuous))
         .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous)
             .strokeBorder(Color.primary.opacity(0.07), lineWidth: 1))
-        // 整卡左侧的橙色竖条：行内高亮只占小块位置，扫列表时容易漏看，
-        // 加一条贯穿的边条让「快到点 / 已到点」的记录在余光里也能被捕捉到。
+        // 整卡左侧的分级提示条：行内高亮只占小块位置，扫列表时容易漏看，
+        // 用与最高紧急等级一致的颜色，让临近或已到期的记录更容易被捕捉到。
         .overlay(alignment: .leading) {
             if !compact, cardHighlightTint != nil {
                 RoundedRectangle(cornerRadius: 2)
@@ -1042,92 +1025,150 @@ struct RecordRow: View {
                 .foregroundColor(.white).font(font))
     }
 
-    /// 卡片级高亮色：只要有任一次提醒到期或临近就返回橙色。nil = 无需高亮。
+    /// 卡片级高亮色取未完成提醒中最紧急的一档。
     private var cardHighlightTint: Color? {
-        for h in r.harvests where !h.harvested {
-            if h.date.timeIntervalSinceNow <= Self.urgentSeconds { return .orange }
+        let urgencies = r.harvests.compactMap { cycle -> ReminderUrgency? in
+            guard !cycle.harvested else { return nil }
+            return ReminderUrgency(remaining: cycle.date.timeIntervalSinceNow)
         }
-        return nil
+        guard let highest = urgencies.max(by: { lhs, rhs in
+            lhs.priority < rhs.priority
+        }), highest.priority > 0 else { return nil }
+        return timeTint(for: highest)
     }
 
-    /// 单次提醒时间的一行：时间 + 该次的倒计时/状态。
-    /// 时间是这行的主角，用 callout + 半粗 + 底色块托住，倒计时用等宽数字紧随其后。
-    private func harvestLine(_ c: HarvestCycle) -> some View {
-        HStack(spacing: 8) {
-            // 时刻是静态文本，不需要每秒重绘。
-            // 颜色只区分「已完成 / 临近 / 常态」——临近判定用 Date() 粗算即可，
-            // 精确到秒的变化交给右侧倒计时（那里本来就在每秒重建）。
-            let left = c.date.timeIntervalSinceNow
-            let tint: Color = c.harvested ? .green
-                : (left <= 0 || left <= Self.urgentSeconds ? .orange : .accentColor)
-            let strength: Double = c.harvested ? 0.10
-                : (left <= 0 || left <= Self.urgentSeconds ? 0.22 : 0.16)
+    /// 紧凑模式没有倒计时文字，仍按 30 秒节拍刷新时间徽标的等级。
+    @ViewBuilder
+    private func compactTimeBadge(_ c: HarvestCycle) -> some View {
+        if c.harvested {
+            timeBadge(c, urgency: .normal, completed: true)
+        } else {
+            TimelineView(.periodic(from: .now, by: 30)) { context in
+                timeBadge(c, urgency: ReminderUrgency(
+                    remaining: c.date.timeIntervalSince(context.date)
+                ))
+            }
+        }
+    }
 
-            Text(fmt(c.date))
+    /// 单次提醒时间与倒计时共用一个 TimelineView，跨过 30/20/10 分钟时同步换档。
+    @ViewBuilder
+    private func harvestLine(_ c: HarvestCycle) -> some View {
+        if c.harvested {
+            HStack(spacing: 8) {
+                timeBadge(c, urgency: .normal, completed: true)
+                Text("已完成")
+                    .font(.caption.weight(.medium))
+                    .foregroundStyle(.green)
+            }
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel("\(fmt(c.date)) 已完成")
+        } else {
+            TimelineView(.periodic(from: .now, by: 1)) { context in
+                let urgency = ReminderUrgency(
+                    remaining: c.date.timeIntervalSince(context.date)
+                )
+                HStack(spacing: 8) {
+                    timeBadge(c, urgency: urgency)
+                    countdownLabel(c, urgency: urgency, now: context.date)
+                }
+                .accessibilityElement(children: .combine)
+                .accessibilityLabel(accessibilityText(c, now: context.date))
+            }
+        }
+    }
+
+    private func timeBadge(
+        _ c: HarvestCycle,
+        urgency: ReminderUrgency,
+        completed: Bool = false
+    ) -> some View {
+        let critical = urgency == .tenMinutes
+        return Text(fmt(c.date))
+            .font(.callout.weight(critical ? .bold : .semibold))
+            .monospacedDigit()
+            .foregroundStyle(completed ? Color.secondary : (critical ? .red : timeTint(for: urgency)))
+            .lineLimit(1)
+            .minimumScaleFactor(0.8)
+            .layoutPriority(1)
+            .padding(.horizontal, 7)
+            .padding(.vertical, 2)
+            .background(
+                completed ? Color.green.opacity(0.10) : timeFill(for: urgency),
+                in: RoundedRectangle(cornerRadius: 6, style: .continuous)
+            )
+    }
+
+    @ViewBuilder
+    private func countdownLabel(
+        _ c: HarvestCycle,
+        urgency: ReminderUrgency,
+        now: Date
+    ) -> some View {
+        switch urgency {
+        case .normal:
+            Text(remainText(c.date, now: now))
+                .font(.callout.weight(.medium))
+                .monospacedDigit()
+                .foregroundStyle(.secondary)
+        case .thirtyMinutes:
+            Text(remainText(c.date, now: now))
                 .font(.callout.weight(.semibold))
                 .monospacedDigit()
-                .foregroundStyle(c.harvested ? Color.secondary : tint)
-                .padding(.horizontal, 7).padding(.vertical, 2)
-                .background(tint.opacity(strength),
-                            in: RoundedRectangle(cornerRadius: 6, style: .continuous))
-
-            countdownView(c)
-        }
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel(accessibilityText(c))
-    }
-
-    /// 倒计时单独包 TimelineView：
-    /// **性能关键** —— 只有这一个 Text 会随时间重建，
-    /// 外层的时刻底色、整张列表都不重绘。
-    /// 若把 TimelineView 提到列表层，每秒会重算所有行，N 条记录 = N 倍无效工作。
-    private func countdownView(_ c: HarvestCycle) -> some View {
-        // 已完成的不需要倒计时，也不该占用每秒刷新，直接返回静态视图
-        if c.harvested {
-            return AnyView(Text("已完成")
-                .font(.caption.weight(.medium))
-                .foregroundStyle(.green))
-        }
-
-        // 秒级刷新由系统统一调度（比自建 Timer 省资源，且 App 后台自动暂停）
-        return AnyView(TimelineView(.periodic(from: .now, by: 1)) { context in
-            let left = c.date.timeIntervalSince(context.date)
-            let overdue = left <= 0
-
-            if overdue {
-                // 到期未收：最需要被看到的状态，给实心胶囊而不是 00:00
-                Text("已到期")
-                    .font(.caption.weight(.bold))
-                    .foregroundStyle(.white)
-                    .padding(.horizontal, 6).padding(.vertical, 2)
-                    .background(Color.orange, in: Capsule())
-            } else if left <= Self.urgentSeconds {
-                // 临近（≤20 分钟）：加深、加底色、加粗 —— 这段时间最可能
-                // 需要马上处理，扫列表时必须一眼看到。
-                Text(remainText(c.date, now: context.date))
-                    .font(.callout.weight(.bold))
+                .foregroundStyle(timeTint(for: urgency))
+                .padding(.horizontal, 6).padding(.vertical, 2)
+                .background(timeFill(for: urgency), in: RoundedRectangle(cornerRadius: 6))
+        case .twentyMinutes:
+            Text(remainText(c.date, now: now))
+                .font(.callout.weight(.bold))
+                .monospacedDigit()
+                .foregroundStyle(.white)
+                .padding(.horizontal, 6).padding(.vertical, 2)
+                .background(Color.orange, in: RoundedRectangle(cornerRadius: 6))
+        case .tenMinutes:
+            HStack(spacing: 3) {
+                Image(systemName: "exclamationmark.circle.fill")
+                    .font(.caption2.weight(.bold))
+                Text(remainText(c.date, now: now))
+                    .font(.callout.weight(.heavy))
                     .monospacedDigit()
-                    .foregroundStyle(Color.white)
-                    .padding(.horizontal, 6).padding(.vertical, 2)
-                    .background(Color.orange, in: RoundedRectangle(cornerRadius: 6,
-                                                                    style: .continuous))
-            } else {
-                // 常规：灰色等宽，不抢视线
-                Text(remainText(c.date, now: context.date))
-                    .font(.callout.weight(.medium))
-                    .monospacedDigit()
-                    .foregroundStyle(.secondary)
             }
-        })
+            .foregroundStyle(.white)
+            .padding(.horizontal, 7).padding(.vertical, 3)
+            .background(Color.red, in: RoundedRectangle(cornerRadius: 6))
+            .shadow(color: .red.opacity(0.28), radius: 3, y: 1)
+        case .overdue:
+            Text("已到期")
+                .font(.caption.weight(.bold))
+                .foregroundStyle(.white)
+                .padding(.horizontal, 6).padding(.vertical, 2)
+                .background(Color.orange, in: Capsule())
+        }
     }
 
-    /// 临近阈值：30 分钟内高亮提示
-    private static let urgentSeconds: TimeInterval = 30 * 60
+    private func timeTint(for urgency: ReminderUrgency) -> Color {
+        switch urgency {
+        case .normal: return .accentColor
+        case .thirtyMinutes: return Color(red: 0.58, green: 0.40, blue: 0.02)
+        case .twentyMinutes: return .orange
+        case .tenMinutes, .overdue: return .red
+        }
+    }
 
-    private func accessibilityText(_ c: HarvestCycle) -> String {
+    private func timeFill(for urgency: ReminderUrgency) -> Color {
+        switch urgency {
+        case .normal: return Color.accentColor.opacity(0.16)
+        case .thirtyMinutes: return Color.yellow.opacity(0.22)
+        case .twentyMinutes: return Color.orange.opacity(0.18)
+        case .tenMinutes: return Color.red.opacity(0.20)
+        case .overdue: return Color.red.opacity(0.20)
+        }
+    }
+
+    private func accessibilityText(_ c: HarvestCycle, now: Date = Date()) -> String {
         let base = fmt(c.date)
         if c.harvested { return "\(base) 已完成" }
-        let left = max(0, Int(c.date.timeIntervalSinceNow))
+        let left = max(0, Int(c.date.timeIntervalSince(now)))
         let h = left / 3600, m = (left % 3600) / 60, s = left % 60
         return h > 0
             ? "\(base) 还剩 \(h) 小时 \(m) 分"

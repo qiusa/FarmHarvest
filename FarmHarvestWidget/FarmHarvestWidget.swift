@@ -68,7 +68,7 @@ struct FarmHarvestWidgetEntryView: View {
                     Spacer(minLength: 0)
                 } else if family == .systemSmall {
                     ForEach(pageRecords) { r in
-                        FarmRow(r: r, now: entry.date, single: true)
+                        FarmRow(r: r, single: true)
                     }
                     Spacer(minLength: 0)
                 } else if expandedLargeRows {
@@ -231,14 +231,7 @@ private struct CompactFarmRow: View {
                         .foregroundStyle(.tertiary)
                 } else {
                     ForEach(cycles) { cycle in
-                        HStack(spacing: 8) {
-                            Text(fmt(cycle.date))
-                                .font(.system(size: 10, weight: .semibold, design: .rounded).monospacedDigit())
-                                .foregroundStyle(.secondary)
-                                .fixedSize(horizontal: true, vertical: false)
-                            compactStatus(cycle)
-                                .fixedSize(horizontal: true, vertical: false)
-                        }
+                        compactCycleLine(cycle)
                     }
                 }
             }
@@ -269,24 +262,103 @@ private struct CompactFarmRow: View {
     }
 
     @ViewBuilder
-    private func compactStatus(_ cycle: HarvestCycle) -> some View {
+    private func compactCycleLine(_ cycle: HarvestCycle) -> some View {
         if cycle.harvested {
-            Text("已完成")
-                .font(.caption2.weight(.medium))
-                .foregroundStyle(.green)
+            HStack(spacing: 6) {
+                compactTimeBadge(cycle, urgency: .normal, completed: true)
+                Text("已完成")
+                    .font(.caption2.weight(.medium))
+                    .foregroundStyle(.green)
+            }
         } else {
             TimelineView(.periodic(from: .now, by: 1)) { context in
-                let left = cycle.date.timeIntervalSince(context.date)
-                if left <= 0 {
-                    Text("已到期")
-                        .font(.caption2.weight(.bold))
-                        .foregroundStyle(.orange)
-                } else {
-                    Text(remainText(cycle.date, now: context.date))
-                        .font(.caption2.weight(.medium).monospacedDigit())
-                        .foregroundStyle(left <= 20 * 60 ? .orange : .secondary)
+                let urgency = ReminderUrgency(
+                    remaining: cycle.date.timeIntervalSince(context.date)
+                )
+                HStack(spacing: 6) {
+                    compactTimeBadge(cycle, urgency: urgency)
+                    compactStatus(cycle, urgency: urgency, now: context.date)
                 }
             }
+        }
+    }
+
+    private func compactTimeBadge(
+        _ cycle: HarvestCycle,
+        urgency: ReminderUrgency,
+        completed: Bool = false
+    ) -> some View {
+        Text(fmt(cycle.date))
+            .font(.system(size: 10, weight: urgency.priority >= 2 ? .bold : .semibold,
+                          design: .rounded).monospacedDigit())
+            .foregroundStyle(completed ? Color.secondary : timeTint(for: urgency))
+            .padding(.horizontal, 4)
+            .padding(.vertical, 1)
+            .background(
+                completed ? Color.green.opacity(0.10) : timeFill(for: urgency),
+                in: RoundedRectangle(cornerRadius: 4, style: .continuous)
+            )
+            .fixedSize(horizontal: true, vertical: false)
+    }
+
+    @ViewBuilder
+    private func compactStatus(
+        _ cycle: HarvestCycle,
+        urgency: ReminderUrgency,
+        now: Date
+    ) -> some View {
+        switch urgency {
+        case .normal:
+            Text(remainText(cycle.date, now: now))
+                .font(.caption2.weight(.medium).monospacedDigit())
+                .foregroundStyle(.secondary)
+        case .thirtyMinutes:
+            Text(remainText(cycle.date, now: now))
+                .font(.caption2.weight(.semibold).monospacedDigit())
+                .foregroundStyle(timeTint(for: urgency))
+                .padding(.horizontal, 4).padding(.vertical, 1)
+                .background(timeFill(for: urgency), in: RoundedRectangle(cornerRadius: 4))
+        case .twentyMinutes:
+            Text(remainText(cycle.date, now: now))
+                .font(.caption2.weight(.bold).monospacedDigit())
+                .foregroundStyle(.white)
+                .padding(.horizontal, 4).padding(.vertical, 1)
+                .background(Color.orange, in: RoundedRectangle(cornerRadius: 4))
+        case .tenMinutes:
+            HStack(spacing: 2) {
+                Image(systemName: "exclamationmark.circle.fill")
+                    .font(.system(size: 8, weight: .bold))
+                Text(remainText(cycle.date, now: now))
+                    .font(.caption2.weight(.heavy).monospacedDigit())
+            }
+            .foregroundStyle(.white)
+            .padding(.horizontal, 4).padding(.vertical, 1)
+            .background(Color.red, in: RoundedRectangle(cornerRadius: 4))
+            .shadow(color: .red.opacity(0.30), radius: 2, y: 1)
+        case .overdue:
+                    Text("已到期")
+                .font(.caption2.weight(.bold))
+                .foregroundStyle(.white)
+                .padding(.horizontal, 4).padding(.vertical, 1)
+                .background(Color.orange, in: Capsule())
+        }
+    }
+
+    private func timeTint(for urgency: ReminderUrgency) -> Color {
+        switch urgency {
+        case .normal: return .secondary
+        case .thirtyMinutes: return Color(red: 0.58, green: 0.40, blue: 0.02)
+        case .twentyMinutes: return .orange
+        case .tenMinutes, .overdue: return .red
+        }
+    }
+
+    private func timeFill(for urgency: ReminderUrgency) -> Color {
+        switch urgency {
+        case .normal: return .clear
+        case .thirtyMinutes: return Color.yellow.opacity(0.22)
+        case .twentyMinutes: return Color.orange.opacity(0.18)
+        case .tenMinutes, .overdue: return Color.red.opacity(0.20)
         }
     }
 }
@@ -295,7 +367,6 @@ private struct CompactFarmRow: View {
 /// 名字 + 各次提醒时间单独一行（MM-dd HH:mm 徽标 + 倒计时/状态）+ 2 行备注。
 struct FarmRow: View {
     let r: CropRecord
-    let now: Date
     let single: Bool
 
     // 字号基准：single（systemSmall，只显示 1 条）时整体放大一档，
@@ -339,64 +410,113 @@ struct FarmRow: View {
                     in: RoundedRectangle(cornerRadius: 10, style: .continuous))
     }
 
-    /// 单次提醒时间的一行：MM-dd HH:mm 徽标 + 该次倒计时/状态（与 App 一致）
+    /// 时间徽标与倒计时在同一个 TimelineView 中换档，确保 30/20/10 分钟提示同步。
+    @ViewBuilder
     private func harvestLine(_ c: HarvestCycle) -> some View {
-        HStack(spacing: 6) {
-            let left = c.date.timeIntervalSince(now)
-            let tint: Color = c.harvested ? .green
-                : (left <= 0 || left <= Self.urgentSeconds ? .orange : .accentColor)
-            let strength: Double = c.harvested ? 0.10
-                : (left <= 0 || left <= Self.urgentSeconds ? 0.22 : 0.16)
-
-            Text(fmt(c.date))
-                .font(timeFont)
-                .monospacedDigit()
-                .foregroundStyle(c.harvested ? Color.secondary : tint)
-                .padding(.horizontal, 6).padding(.vertical, 1)
-                .background(tint.opacity(strength),
-                            in: RoundedRectangle(cornerRadius: 5, style: .continuous))
-
-            countdownView(c)
-        }
-    }
-
-    /// 倒计时单独包 TimelineView：与 App 一致，只有这个 Text 随时间重建，
-    /// 外层的时刻底色、整张列表都不重绘。
-    private func countdownView(_ c: HarvestCycle) -> some View {
         if c.harvested {
-            return AnyView(Text("已完成")
-                .font(countFont.weight(.medium))
-                .foregroundStyle(.green))
-        }
-        return AnyView(TimelineView(.periodic(from: .now, by: 1)) { context in
-            let left = c.date.timeIntervalSince(context.date)
-            if left <= 0 {
-                // 到期未收：最需要被看到的状态，给实心胶囊
-                Text("已到期")
-                    .font(countFont.weight(.bold))
-                    .foregroundStyle(.white)
-                    .padding(.horizontal, 5).padding(.vertical, 1)
-                    .background(Color.orange, in: Capsule())
-            } else if left <= Self.urgentSeconds {
-                // 临近（≤20 分钟）：加深、加底色、加粗
-                Text(remainText(c.date, now: context.date))
-                    .font(countFont.weight(.bold))
-                    .monospacedDigit()
-                    .foregroundStyle(.white)
-                    .padding(.horizontal, 5).padding(.vertical, 1)
-                    .background(Color.orange, in: RoundedRectangle(cornerRadius: 5, style: .continuous))
-            } else {
-                // 常规：灰色等宽，不抢视线
-                Text(remainText(c.date, now: context.date))
+            HStack(spacing: 6) {
+                timeBadge(c, urgency: .normal, completed: true)
+                Text("已完成")
                     .font(countFont.weight(.medium))
-                    .monospacedDigit()
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.green)
             }
-        })
+        } else {
+            TimelineView(.periodic(from: .now, by: 1)) { context in
+                let urgency = ReminderUrgency(
+                    remaining: c.date.timeIntervalSince(context.date)
+                )
+                HStack(spacing: 6) {
+                    timeBadge(c, urgency: urgency)
+                    countdownLabel(c, urgency: urgency, now: context.date)
+                }
+            }
+        }
     }
 
-    /// 临近阈值：20 分钟内进入高亮态（与 App 一致）
-    private static let urgentSeconds: TimeInterval = 20 * 60
+    private func timeBadge(
+        _ c: HarvestCycle,
+        urgency: ReminderUrgency,
+        completed: Bool = false
+    ) -> some View {
+        let critical = urgency == .tenMinutes
+        return Text(fmt(c.date))
+            .font(timeFont.weight(critical ? .bold : .semibold))
+            .monospacedDigit()
+            .foregroundStyle(completed ? Color.secondary : (critical ? .red : timeTint(for: urgency)))
+            .lineLimit(1)
+            .minimumScaleFactor(0.8)
+            .padding(.horizontal, 6).padding(.vertical, 1)
+            .background(
+                completed ? Color.green.opacity(0.10) : timeFill(for: urgency),
+                in: RoundedRectangle(cornerRadius: 5, style: .continuous)
+            )
+    }
+
+    @ViewBuilder
+    private func countdownLabel(
+        _ c: HarvestCycle,
+        urgency: ReminderUrgency,
+        now: Date
+    ) -> some View {
+        switch urgency {
+        case .normal:
+            Text(remainText(c.date, now: now))
+                .font(countFont.weight(.medium))
+                .monospacedDigit()
+                .foregroundStyle(.secondary)
+        case .thirtyMinutes:
+            Text(remainText(c.date, now: now))
+                .font(countFont.weight(.semibold))
+                .monospacedDigit()
+                .foregroundStyle(timeTint(for: urgency))
+                .padding(.horizontal, 5).padding(.vertical, 1)
+                .background(timeFill(for: urgency), in: RoundedRectangle(cornerRadius: 5))
+        case .twentyMinutes:
+            Text(remainText(c.date, now: now))
+                .font(countFont.weight(.bold))
+                .monospacedDigit()
+                .foregroundStyle(.white)
+                .padding(.horizontal, 5).padding(.vertical, 1)
+                .background(Color.orange, in: RoundedRectangle(cornerRadius: 5))
+        case .tenMinutes:
+            HStack(spacing: 2) {
+                Image(systemName: "exclamationmark.circle.fill")
+                    .font(.system(size: single ? 9 : 8, weight: .bold))
+                Text(remainText(c.date, now: now))
+                    .font(countFont.weight(.heavy))
+                    .monospacedDigit()
+            }
+            .foregroundStyle(.white)
+            .padding(.horizontal, 5).padding(.vertical, 2)
+            .background(Color.red, in: RoundedRectangle(cornerRadius: 5))
+            .shadow(color: .red.opacity(0.30), radius: 2, y: 1)
+        case .overdue:
+            Text("已到期")
+                .font(countFont.weight(.bold))
+                .foregroundStyle(.white)
+                .padding(.horizontal, 5).padding(.vertical, 1)
+                .background(Color.orange, in: Capsule())
+        }
+    }
+
+    private func timeTint(for urgency: ReminderUrgency) -> Color {
+        switch urgency {
+        case .normal: return .accentColor
+        case .thirtyMinutes: return Color(red: 0.58, green: 0.40, blue: 0.02)
+        case .twentyMinutes: return .orange
+        case .tenMinutes, .overdue: return .red
+        }
+    }
+
+    private func timeFill(for urgency: ReminderUrgency) -> Color {
+        switch urgency {
+        case .normal: return Color.accentColor.opacity(0.16)
+        case .thirtyMinutes: return Color.yellow.opacity(0.22)
+        case .twentyMinutes: return Color.orange.opacity(0.18)
+        case .tenMinutes: return Color.red.opacity(0.20)
+        case .overdue: return Color.red.opacity(0.20)
+        }
+    }
 }
 
 @main

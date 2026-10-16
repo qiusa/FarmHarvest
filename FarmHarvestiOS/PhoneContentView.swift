@@ -667,23 +667,7 @@ private struct PhoneRecordRow: View {
                 id: \.element.id
             ) { index, cycle in
                 HStack {
-                    VStack(alignment: .leading, spacing: 3) {
-                        Text("第 \(index + 1) 次 · \(fmt(cycle.date))")
-                            .font(.subheadline.weight(.semibold))
-                        TimelineView(.periodic(from: .now, by: 1)) { context in
-                            Text(cycle.harvested
-                                 ? "已完成"
-                                 : (cycle.date <= context.date
-                                    ? "已到期"
-                                    : "还剩 \(remainText(cycle.date, now: context.date))"))
-                                .font(.caption)
-                                .foregroundStyle(
-                                    cycle.harvested ? .green
-                                        : (cycle.date <= context.date ? .orange : .secondary)
-                                )
-                                .monospacedDigit()
-                        }
-                    }
+                    cycleSummary(index: index, cycle: cycle)
                     Spacer()
                     Button(cycle.harvested ? "撤销" : "已完成") {
                         onToggleHarvest(cycle)
@@ -696,6 +680,104 @@ private struct PhoneRecordRow: View {
             }
         }
         .padding(.vertical, 4)
+    }
+
+    @ViewBuilder
+    private func cycleSummary(index: Int, cycle: HarvestCycle) -> some View {
+        if cycle.harvested {
+            VStack(alignment: .leading, spacing: 3) {
+                HStack(spacing: 5) {
+                    Text("第 \(index + 1) 次")
+                        .foregroundStyle(.secondary)
+                    Text(fmt(cycle.date))
+                        .foregroundStyle(.secondary)
+                }
+                .font(.subheadline.weight(.semibold))
+                Text("已完成")
+                    .font(.caption.weight(.medium))
+                    .foregroundStyle(.green)
+            }
+        } else {
+            TimelineView(.periodic(from: .now, by: 1)) { context in
+                let urgency = ReminderUrgency(
+                    remaining: cycle.date.timeIntervalSince(context.date)
+                )
+                VStack(alignment: .leading, spacing: 3) {
+                    HStack(spacing: 5) {
+                        Text("第 \(index + 1) 次")
+                            .foregroundStyle(.secondary)
+                        Text(fmt(cycle.date))
+                            .foregroundStyle(urgency == .tenMinutes ? Color.red : timeTint(for: urgency))
+                            .padding(.horizontal, 5)
+                            .padding(.vertical, 1)
+                            .background(timeFill(for: urgency), in: RoundedRectangle(cornerRadius: 5))
+                    }
+                    .font(.subheadline.weight(urgency.priority >= 2 ? .bold : .semibold))
+                    countdownLabel(cycle, urgency: urgency, now: context.date)
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func countdownLabel(
+        _ cycle: HarvestCycle,
+        urgency: ReminderUrgency,
+        now: Date
+    ) -> some View {
+        switch urgency {
+        case .normal:
+            Text("还剩 \(remainText(cycle.date, now: now))")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .monospacedDigit()
+        case .thirtyMinutes:
+            Text("还剩 \(remainText(cycle.date, now: now))")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(timeTint(for: urgency))
+                .monospacedDigit()
+                .padding(.horizontal, 6).padding(.vertical, 3)
+                .background(timeFill(for: urgency), in: Capsule())
+        case .twentyMinutes:
+            Text("还剩 \(remainText(cycle.date, now: now))")
+                .font(.caption.weight(.bold))
+                .foregroundStyle(.white)
+                .monospacedDigit()
+                .padding(.horizontal, 7).padding(.vertical, 3)
+                .background(Color.orange, in: Capsule())
+        case .tenMinutes:
+            Label("还剩 \(remainText(cycle.date, now: now))", systemImage: "exclamationmark.circle.fill")
+                .font(.caption.weight(.heavy))
+                .foregroundStyle(.white)
+                .monospacedDigit()
+                .padding(.horizontal, 8).padding(.vertical, 4)
+                .background(Color.red, in: Capsule())
+                .shadow(color: .red.opacity(0.28), radius: 3, y: 1)
+        case .overdue:
+            Text("已到期")
+                .font(.caption.weight(.bold))
+                .foregroundStyle(.white)
+                .padding(.horizontal, 7).padding(.vertical, 3)
+                .background(Color.orange, in: Capsule())
+        }
+    }
+
+    private func timeTint(for urgency: ReminderUrgency) -> Color {
+        switch urgency {
+        case .normal: return .primary
+        case .thirtyMinutes: return Color(red: 0.58, green: 0.40, blue: 0.02)
+        case .twentyMinutes: return .orange
+        case .tenMinutes, .overdue: return .red
+        }
+    }
+
+    private func timeFill(for urgency: ReminderUrgency) -> Color {
+        switch urgency {
+        case .normal: return Color.clear
+        case .thirtyMinutes: return Color.yellow.opacity(0.22)
+        case .twentyMinutes: return Color.orange.opacity(0.18)
+        case .tenMinutes, .overdue: return Color.red.opacity(0.20)
+        }
     }
 }
 

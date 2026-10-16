@@ -859,6 +859,40 @@ func remainText(_ target: Date, now: Date = Date()) -> String {
         : String(format: "%02d:%02d", m, sec)
 }
 
+/// 事项倒计时的统一提醒等级，供 macOS、iOS 和 Widget 共用，避免阈值不一致。
+enum ReminderUrgency: Equatable {
+    case normal
+    case thirtyMinutes
+    case twentyMinutes
+    case tenMinutes
+    case overdue
+
+    init(remaining: TimeInterval) {
+        if remaining <= 0 {
+            self = .overdue
+        } else if remaining <= 10 * 60 {
+            self = .tenMinutes
+        } else if remaining <= 20 * 60 {
+            self = .twentyMinutes
+        } else if remaining <= 30 * 60 {
+            self = .thirtyMinutes
+        } else {
+            self = .normal
+        }
+    }
+
+    /// 卡片级提示只突出需要关注的等级，数值越大越紧急。
+    var priority: Int {
+        switch self {
+        case .normal: return 0
+        case .thirtyMinutes: return 1
+        case .twentyMinutes: return 2
+        case .tenMinutes: return 3
+        case .overdue: return 4
+        }
+    }
+}
+
 /// 按记录倒计时：有多次处理时对准「下一次提醒」而不是首次，
 /// 否则首次过了之后会永远停在 00:00，看不出还要等多久收第二次。
 func remainText(_ r: CropRecord) -> String {
