@@ -2,7 +2,7 @@ import SwiftUI
 import AppKit
 import UniformTypeIdentifiers
 
-/// 蔬菜管理弹窗：新增自定义蔬菜、管理（内置 + 自定义均可删除 / 恢复）、数据导入导出
+/// 事项模板管理弹窗：新增自定义模板、管理（内置 + 自定义均可删除 / 恢复）、数据导入导出
 struct CropManagerSheet: View {
     let onAdded: (CropPreset) -> Void
     @Environment(\.dismiss) private var dismiss
@@ -18,7 +18,7 @@ struct CropManagerSheet: View {
     @State private var presets: [CropPreset] = CropStore.presets
     @State private var hidden: [CropPreset] = CropStore.hiddenBuiltinCrops()
     @State private var builtinIDs: Set<String> = Set(CropStore.builtinCrops.map(\.id))
-    /// 收菜记录条数缓存：导入后必须刷新，否则「当前数据」显示的是旧值
+    /// 提醒记录条数缓存：导入后必须刷新，否则「当前数据」显示的是旧值
     @State private var recordCount: Int = CropStore.load().count
 
     // 新增表单
@@ -90,7 +90,7 @@ struct CropManagerSheet: View {
             }
             .padding(24)
             .frame(minWidth: 560, minHeight: 540, alignment: .topLeading)
-            .navigationTitle("蔬菜管理")
+            .navigationTitle("事项模板管理")
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("完成") { dismiss() }
@@ -107,8 +107,8 @@ struct CropManagerSheet: View {
             }
         } message: {
             Text(builtinIDs.contains(pendingDelete?.id ?? "")
-                 ? "内置蔬菜不会真正移除，可随时在「管理 - 已删除的内置」中恢复。"
-                 : "该蔬菜将从列表中移除。")
+                 ? "内置模板不会真正移除，可随时在「管理 - 已删除的内置」中恢复。"
+                 : "该模板将从列表中移除。")
         }
         .fileExporter(isPresented: $showExporter,
                       document: BackupDocument(data: exportData),
@@ -165,7 +165,7 @@ struct CropManagerSheet: View {
                 pendingRemoteImportURL = nil
             }
         } message: {
-            Text("当前收菜记录、自定义蔬菜和内置蔬菜隐藏状态将被远程备份覆盖。")
+            Text("当前提醒记录、自定义模板和内置模板隐藏状态将被远程备份覆盖。")
         }
     }
 
@@ -174,8 +174,8 @@ struct CropManagerSheet: View {
     private var addTab: some View {
         GlassPanel {
             VStack(alignment: .leading, spacing: 18) {
-                LabeledField("蔬菜名字") {
-                    TextField("例如 菠菜", text: $name)
+                LabeledField("模板名称") {
+                    TextField("例如：会议安排", text: $name)
                         .textFieldStyle(.roundedBorder)
                         .frame(width: 240)
                 }
@@ -200,7 +200,7 @@ struct CropManagerSheet: View {
                     .padding(.leading, 122)
                 }
 
-                LabeledField("默认成熟") {
+                LabeledField("默认提醒间隔") {
                     HStack(spacing: 8) {
                         TextField("0", text: $hoursText)
                             .textFieldStyle(.roundedBorder)
@@ -287,9 +287,9 @@ struct CropManagerSheet: View {
                     Button {
                         CropStore.restoreAllBuiltinCrops()
                         refresh()
-                        show("已恢复全部内置蔬菜")
+                        show("已恢复全部内置模板")
                     } label: {
-                        Label("一键恢复全部内置蔬菜", systemImage: "arrow.uturn.backward.circle")
+                        Label("一键恢复全部内置模板", systemImage: "arrow.uturn.backward.circle")
                     }
                     .buttonStyle(.bordered)
                     .controlSize(.small)
@@ -397,7 +397,7 @@ struct CropManagerSheet: View {
 
                             Text(importMode == .merge
                                  ? "合并：同 id 的记录被备份覆盖，本地没有的记录追加到末尾。若备份就是本机导出的那份，内容会完全一致、界面看不出变化。"
-                                 : "替换：清空当前全部记录与蔬菜，完全采用备份内容。")
+                                 : "替换：清空当前全部记录与模板，完全采用备份内容。")
                                 .font(.caption).foregroundStyle(.secondary)
                                 .fixedSize(horizontal: false, vertical: true)
 
@@ -441,7 +441,7 @@ struct CropManagerSheet: View {
                     VStack(alignment: .leading, spacing: 8) {
                         Text("当前数据")
                             .font(.subheadline).foregroundStyle(.secondary)
-                        Text("收菜记录 \(recordCount) 条 · 蔬菜 \(presets.count) 个（内置 \(presets.count - customCount) + 自定义 \(customCount)）")
+                        Text("提醒记录 \(recordCount) 条 · 模板 \(presets.count) 个（内置 \(presets.count - customCount) + 自定义 \(customCount)）")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true)

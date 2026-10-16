@@ -69,7 +69,7 @@ private enum WidgetPageNavigationError: Error {
 
 /// Separate parameterless intents avoid runtime parameter resolution in the widget process.
 struct PreviousWidgetPageIntent: AppIntent {
-    static var title: LocalizedStringResource = "上一页收菜记录"
+    static var title: LocalizedStringResource = "上一页提醒记录"
 
     @available(macOS 27.0, *)
     static var allowedExecutionTargets: IntentExecutionTargets { .main }
@@ -81,7 +81,7 @@ struct PreviousWidgetPageIntent: AppIntent {
 }
 
 struct NextWidgetPageIntent: AppIntent {
-    static var title: LocalizedStringResource = "下一页收菜记录"
+    static var title: LocalizedStringResource = "下一页提醒记录"
 
     @available(macOS 27.0, *)
     static var allowedExecutionTargets: IntentExecutionTargets { .main }

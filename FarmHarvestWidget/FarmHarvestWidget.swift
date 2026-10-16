@@ -118,15 +118,15 @@ struct FarmHarvestWidgetEntryView: View {
         family == .systemLarge && pageRecords.count == 5
     }
 
-    /// 中/大组件按完整作物记录分页，并根据组件尺寸增加可显示行数；
-    /// 同一条记录的多茬时间始终放在一起，不拆成独立记录或跨页。
+    /// 中/大组件按完整事项记录分页，并根据组件尺寸增加可显示行数；
+    /// 同一条记录的多次时间始终放在一起，不拆成独立记录或跨页。
     private var recordPages: [[CropRecord]] {
         guard family != .systemSmall else {
             return entry.records.map { [$0] }
         }
 
         // Large 组件每页固定 5 条记录，记录卡均分高度铺满组件；
-        // Medium 组件按完整记录分组，每页约 5 行收菜时间。
+        // Medium 组件按完整记录分组，每页约 5 行提醒时间。
         if family == .systemLarge {
             let pageSize = 5
             let pages = stride(from: 0, to: entry.records.count, by: pageSize).map { start in
@@ -200,7 +200,7 @@ struct FarmHarvestWidgetEntryView: View {
     }
 }
 
-/// 中/大组件专用的紧凑记录卡；同一条记录的多茬收菜时间分行显示。
+/// 中/大组件专用的紧凑记录卡；同一条记录的多次提醒时间分行显示。
 private struct CompactFarmRow: View {
     let r: CropRecord
 
@@ -226,7 +226,7 @@ private struct CompactFarmRow: View {
 
             VStack(alignment: .trailing, spacing: 5) {
                 if cycles.isEmpty {
-                    Text("未设置收菜时间")
+                    Text("未设置提醒时间")
                         .font(.caption2)
                         .foregroundStyle(.tertiary)
                 } else {
@@ -271,14 +271,14 @@ private struct CompactFarmRow: View {
     @ViewBuilder
     private func compactStatus(_ cycle: HarvestCycle) -> some View {
         if cycle.harvested {
-            Text("已收")
+            Text("已完成")
                 .font(.caption2.weight(.medium))
                 .foregroundStyle(.green)
         } else {
             TimelineView(.periodic(from: .now, by: 1)) { context in
                 let left = cycle.date.timeIntervalSince(context.date)
                 if left <= 0 {
-                    Text("可收")
+                    Text("已到期")
                         .font(.caption2.weight(.bold))
                         .foregroundStyle(.orange)
                 } else {
@@ -292,7 +292,7 @@ private struct CompactFarmRow: View {
 }
 
 /// 单行：与 App 主界面 RecordRow 完全一致的结构 ——
-/// 名字 + 每茬收菜时间单独一行（MM-dd HH:mm 徽标 + 该茬倒计时/状态）+ 2 行备注。
+/// 名字 + 各次提醒时间单独一行（MM-dd HH:mm 徽标 + 倒计时/状态）+ 2 行备注。
 struct FarmRow: View {
     let r: CropRecord
     let now: Date
@@ -315,10 +315,10 @@ struct FarmRow: View {
             VStack(alignment: .leading, spacing: single ? 3 : 4) {
                 Text(r.name).font(nameFont)
 
-                // 每茬收菜时间单独一行：多茬时全部时间点直接铺开，
-                // 一眼看清哪几茬已收、哪几茬还等着（与 App 记录行一致）
+                // 各次提醒时间单独一行：多次时全部时间点直接铺开，
+                // 一眼看清哪几次已完成、哪几次还等着（与 App 记录行一致）
                 if r.harvests.isEmpty {
-                    Text("未设置收菜时间")
+                    Text("未设置提醒时间")
                         .font(.caption2).foregroundStyle(.tertiary)
                 } else {
                     ForEach(r.harvests) { c in harvestLine(c) }
@@ -339,7 +339,7 @@ struct FarmRow: View {
                     in: RoundedRectangle(cornerRadius: 10, style: .continuous))
     }
 
-    /// 单茬收菜时间的一行：MM-dd HH:mm 徽标 + 该茬倒计时/状态（与 App 一致）
+    /// 单次提醒时间的一行：MM-dd HH:mm 徽标 + 该次倒计时/状态（与 App 一致）
     private func harvestLine(_ c: HarvestCycle) -> some View {
         HStack(spacing: 6) {
             let left = c.date.timeIntervalSince(now)
@@ -364,7 +364,7 @@ struct FarmRow: View {
     /// 外层的时刻底色、整张列表都不重绘。
     private func countdownView(_ c: HarvestCycle) -> some View {
         if c.harvested {
-            return AnyView(Text("已收")
+            return AnyView(Text("已完成")
                 .font(countFont.weight(.medium))
                 .foregroundStyle(.green))
         }
@@ -372,7 +372,7 @@ struct FarmRow: View {
             let left = c.date.timeIntervalSince(context.date)
             if left <= 0 {
                 // 到期未收：最需要被看到的状态，给实心胶囊
-                Text("可收")
+                Text("已到期")
                     .font(countFont.weight(.bold))
                     .foregroundStyle(.white)
                     .padding(.horizontal, 5).padding(.vertical, 1)

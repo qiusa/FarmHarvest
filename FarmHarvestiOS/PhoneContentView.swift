@@ -38,7 +38,7 @@ struct PhoneContentView: View {
         TabView {
             NavigationStack {
                 plantForm
-                    .navigationTitle("种菜")
+                    .navigationTitle("新建事项")
                     .toolbar {
                         ToolbarItem(placement: .topBarTrailing) {
                             Button {
@@ -46,12 +46,12 @@ struct PhoneContentView: View {
                             } label: {
                                 Image(systemName: "plus")
                             }
-                            .accessibilityLabel("添加自定义蔬菜")
+                            .accessibilityLabel("添加自定义模板")
                         }
                     }
             }
             .tabItem {
-                Label("种菜", systemImage: "leaf")
+                Label("新建事项", systemImage: "plus.circle")
             }
 
             NavigationStack {
@@ -59,7 +59,7 @@ struct PhoneContentView: View {
                     .navigationTitle("事项记录")
                     .toolbar {
                         ToolbarItem(placement: .topBarTrailing) {
-                            Button("清除已收获") {
+                            Button("清理已结束") {
                                 showClearConfirmation = true
                             }
                             .disabled(clearableRecordCount == 0)
@@ -119,7 +119,7 @@ struct PhoneContentView: View {
             Text(deleteConfirmationMessage)
         }
         .confirmationDialog(
-            "清除已收获或已到收菜时间的记录？",
+            "清理已结束或已到提醒时间的记录？",
             isPresented: $showClearConfirmation,
             titleVisibility: .visible
         ) {
@@ -131,7 +131,7 @@ struct PhoneContentView: View {
             }
             Button("取消", role: .cancel) {}
         } message: {
-            Text("仅清除每一茬都已采收或已到收菜时间的记录；仍有未来采收时间的记录会保留。")
+            Text("仅清理所有提醒均已完成或已到期的记录；仍有未来提醒时间的记录会保留。")
         }
         .confirmationDialog(
             "用远程备份替换本机数据？",
@@ -147,7 +147,7 @@ struct PhoneContentView: View {
                 pendingRemoteImportURL = nil
             }
         } message: {
-            Text("当前收菜记录、自定义蔬菜和内置蔬菜隐藏状态将被远程备份覆盖。")
+            Text("当前提醒记录、自定义模板和内置模板隐藏状态将被远程备份覆盖。")
         }
         .alert("提示", isPresented: Binding(
             get: { message != nil },
@@ -161,12 +161,12 @@ struct PhoneContentView: View {
 
     private var plantForm: some View {
         Form {
-            Section("蔬菜") {
+            Section("模板") {
                 if presets.isEmpty {
-                    Text("还没有可选蔬菜，请先添加。")
+                    Text("还没有可选模板，请先添加。")
                         .foregroundStyle(.secondary)
                 } else {
-                    Picker("选择蔬菜", selection: $selectedPresetID) {
+                    Picker("选择模板", selection: $selectedPresetID) {
                         ForEach(presets) { preset in
                             Text(preset.name).tag(preset.id)
                         }
@@ -179,7 +179,7 @@ struct PhoneContentView: View {
                 }
             }
 
-            Section("成熟时间") {
+            Section("提醒间隔") {
                 HStack {
                     TextField("分钟", text: $minutesText)
                         .keyboardType(.numberPad)
@@ -189,7 +189,7 @@ struct PhoneContentView: View {
                 }
 
                 if let minutes = parsedMinutes {
-                    Text("预计收菜：\(fmt(Date().addingTimeInterval(TimeInterval(minutes * 60))))")
+                    Text("预计提醒：\(fmt(Date().addingTimeInterval(TimeInterval(minutes * 60))))")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                 } else {
@@ -200,7 +200,7 @@ struct PhoneContentView: View {
             }
 
             Section("备注（可选）") {
-                TextField("例如：阳台东侧", text: $note, axis: .vertical)
+                TextField("例如：会议材料", text: $note, axis: .vertical)
                     .lineLimit(2...4)
             }
 
@@ -208,7 +208,7 @@ struct PhoneContentView: View {
                 Button {
                     addRecord()
                 } label: {
-                    Label("种下并开始倒计时", systemImage: "leaf.fill")
+                    Label("添加提醒", systemImage: "bell")
                         .frame(maxWidth: .infinity)
                 }
                 .font(.headline)
@@ -230,8 +230,8 @@ struct PhoneContentView: View {
             Section {
                 TimelineView(.periodic(from: .now, by: 5)) { context in
                     HStack(spacing: 8) {
-                        recordStat("待收", value: countPending(at: context.date), tint: .orange)
-                        recordStat("可收获", value: countReady(at: context.date), tint: .green)
+                        recordStat("待提醒", value: countPending(at: context.date), tint: .orange)
+                        recordStat("已到期", value: countReady(at: context.date), tint: .green)
                         recordStat("总计", value: records.count, tint: .accentColor)
                     }
                     .padding(.vertical, 4)
@@ -239,12 +239,12 @@ struct PhoneContentView: View {
                 .listRowBackground(Color.clear)
             }
 
-            Section("收菜记录（\(records.count)）") {
+            Section("提醒记录（\(records.count)）") {
                 if records.isEmpty {
                     ContentUnavailableView(
-                        "还没有收菜记录",
-                        systemImage: "carrot",
-                        description: Text("到「种菜」页面添加一条记录。")
+                        "还没有提醒记录",
+                        systemImage: "clock",
+                        description: Text("到「新建事项」页面添加一条记录。")
                     )
                     .listRowBackground(Color.clear)
                 } else {
@@ -321,20 +321,20 @@ struct PhoneContentView: View {
         let count = record.harvests.count
         if count <= 1 {
             let date = record.harvests.first.map { fmt($0.date) } ?? "未设置"
-            return "收菜时间 \(date)。此操作不可撤销。"
+            return "提醒时间：\(date)。此操作不可撤销。"
         }
         let harvested = record.harvests.filter(\.harvested).count
         let next = record.nextHarvest.map { fmt($0) } ?? "无"
-        return "共 \(count) 茬，已采收 \(harvested) 茬。下次收菜：\(next)。此操作不可撤销。"
+        return "共 \(count) 次，已完成 \(harvested) 次。下次提醒：\(next)。此操作不可撤销。"
     }
 
     private var addCropSheet: some View {
         NavigationStack {
             Form {
-                Section("自定义蔬菜") {
+                Section("自定义模板") {
                     TextField("名称", text: $newCropName)
                     HStack {
-                        TextField("成熟分钟数", text: $newCropMinutes)
+                        TextField("提醒间隔（分钟）", text: $newCropMinutes)
                             .keyboardType(.numberPad)
                             .multilineTextAlignment(.trailing)
                         Text("分钟").foregroundStyle(.secondary)
@@ -343,7 +343,7 @@ struct PhoneContentView: View {
             }
             .scrollDismissesKeyboard(.interactively)
             .background(DismissKeyboardOnBackgroundTap())
-            .navigationTitle("添加蔬菜")
+            .navigationTitle("添加模板")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItemGroup(placement: .keyboard) {
@@ -358,7 +358,7 @@ struct PhoneContentView: View {
                         let name = newCropName.trimmingCharacters(in: .whitespacesAndNewlines)
                         guard !name.isEmpty,
                               let minutes = Int(newCropMinutes), minutes > 0 else {
-                            message = "请填写蔬菜名称和大于 0 的成熟分钟数。"
+                            message = "请填写事项名称和大于 0 的提醒间隔（分钟）。"
                             return
                         }
                         let preset = CropStore.addCustomCrop(name: name, minutes: minutes)
@@ -421,8 +421,8 @@ struct PhoneContentView: View {
                 .pickerStyle(.segmented)
 
                 Text(remoteImportMode == .merge
-                     ? "同 ID 的记录和蔬菜会更新，本机没有的项目会追加；本机独有项目保留。"
-                     : "完全采用远程备份，会覆盖本机记录、自定义蔬菜和隐藏的内置蔬菜。")
+                     ? "同 ID 的记录和模板会更新，本机没有的项目会追加；本机独有项目保留。"
+                     : "完全采用远程备份，会覆盖本机记录、自定义模板和隐藏的内置模板。")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
 
@@ -518,7 +518,7 @@ struct PhoneContentView: View {
         CropStore.add(preset: preset, minutes: minutes, note: trimmedNote.isEmpty ? nil : trimmedNote)
         refresh()
         note = ""
-        message = records.count > previousCount ? "已种下「\(preset.name)」，收菜提醒已安排。" : "保存失败，请检查设备存储空间后重试。"
+        message = records.count > previousCount ? "已添加「\(preset.name)」，事项提醒已安排。" : "保存失败，请检查设备存储空间后重试。"
     }
 
     private func refresh() {
@@ -650,11 +650,11 @@ private struct PhoneRecordRow: View {
                 .buttonStyle(.bordered)
                 .accessibilityLabel("编辑 \(record.name)")
                 Button(action: onRenew) {
-                    Label("续种", systemImage: "arrow.clockwise")
+                    Label("再次提醒", systemImage: "arrow.clockwise")
                         .labelStyle(.iconOnly)
                 }
                 .buttonStyle(.bordered)
-                .accessibilityLabel("续种 \(record.name)")
+                .accessibilityLabel("再次提醒 \(record.name)")
             }
 
             if let note = record.note, !note.isEmpty {
@@ -668,13 +668,13 @@ private struct PhoneRecordRow: View {
             ) { index, cycle in
                 HStack {
                     VStack(alignment: .leading, spacing: 3) {
-                        Text("第 \(index + 1) 茬 · \(fmt(cycle.date))")
+                        Text("第 \(index + 1) 次 · \(fmt(cycle.date))")
                             .font(.subheadline.weight(.semibold))
                         TimelineView(.periodic(from: .now, by: 1)) { context in
                             Text(cycle.harvested
-                                 ? "已采收"
+                                 ? "已完成"
                                  : (cycle.date <= context.date
-                                    ? "可以收菜"
+                                    ? "已到期"
                                     : "还剩 \(remainText(cycle.date, now: context.date))"))
                                 .font(.caption)
                                 .foregroundStyle(
@@ -685,7 +685,7 @@ private struct PhoneRecordRow: View {
                         }
                     }
                     Spacer()
-                    Button(cycle.harvested ? "撤销" : "已采收") {
+                    Button(cycle.harvested ? "撤销" : "已完成") {
                         onToggleHarvest(cycle)
                     }
                     .buttonStyle(.bordered)
@@ -764,11 +764,11 @@ private struct PhoneEditRecordSheet: View {
             .filter { !$0.harvested && $0.date > Date() }
             .map(\.date)
             .min()
-        var text = "共 \(harvests.count) 茬 · 已采收 \(harvestedCount)"
+        var text = "共 \(harvests.count) 次 · 已完成 \(harvestedCount)"
         if let next {
             text += " · 下次 \(fmt(next))"
         } else if harvestedCount < harvests.count {
-            text += " · 有 \(harvests.count - harvestedCount) 茬待处理"
+            text += " · 有 \(harvests.count - harvestedCount) 次待处理"
         }
         return text
     }
@@ -777,14 +777,14 @@ private struct PhoneEditRecordSheet: View {
         NavigationStack {
             Form {
                 Section("记录信息") {
-                    TextField("蔬菜名称", text: $name)
+                    TextField("事项名称", text: $name)
                     TextField("备注说明", text: $note, axis: .vertical)
                         .lineLimit(2...4)
                 }
 
                 Section {
                     if harvests.isEmpty {
-                        Text("至少保留一茬收菜时间，或先添加一茬再保存。")
+                        Text("至少保留一个提醒时间，或先添加一次提醒再保存。")
                             .font(.footnote)
                             .foregroundStyle(.orange)
                     }
@@ -792,7 +792,7 @@ private struct PhoneEditRecordSheet: View {
                     ForEach($harvests) { $cycle in
                         VStack(alignment: .leading, spacing: 8) {
                             DatePicker(
-                                "收菜时间",
+                                "提醒时间",
                                 selection: $cycle.date,
                                 displayedComponents: [.date, .hourAndMinute]
                             )
@@ -830,13 +830,13 @@ private struct PhoneEditRecordSheet: View {
                                 }
                                 .disabled(cycleAdjustmentDuration(for: cycle.id) == nil)
                             }
-                            Toggle("已采收", isOn: $cycle.harvested)
+                            Toggle("已完成", isOn: $cycle.harvested)
                             HStack {
                                 TimelineView(.periodic(from: .now, by: 1)) { context in
                                     Text(cycle.harvested
-                                         ? "已采收"
+                                         ? "已完成"
                                          : (cycle.date <= context.date
-                                            ? "可以收菜"
+                                            ? "已到期"
                                             : "还剩 \(remainText(cycle.date, now: context.date))"))
                                         .font(.caption)
                                         .monospacedDigit()
@@ -846,7 +846,7 @@ private struct PhoneEditRecordSheet: View {
                                         )
                                 }
                                 Spacer()
-                                Button("删除这一茬", role: .destructive) {
+                                Button("删除这一次提醒", role: .destructive) {
                                     pendingCycleDelete = cycle
                                 }
                                 .font(.caption)
@@ -855,13 +855,13 @@ private struct PhoneEditRecordSheet: View {
                         .padding(.vertical, 4)
                     }
                 } header: {
-                    Text("收菜时间（每茬可单独编辑）")
+                    Text("提醒时间（每次提醒可单独编辑）")
                 } footer: {
                     Text(summary)
                 }
 
-                Section("再续一茬") {
-                    Picker("续期方式", selection: $newMode) {
+                Section("添加下一次提醒") {
+                    Picker("新增方式", selection: $newMode) {
                         ForEach(NewCycleMode.allCases) { mode in
                             Text(mode.rawValue).tag(mode)
                         }
@@ -870,7 +870,7 @@ private struct PhoneEditRecordSheet: View {
 
                     if newMode == .absoluteDate {
                         DatePicker(
-                            "收菜时间",
+                            "提醒时间",
                             selection: $newDate,
                             displayedComponents: [.date, .hourAndMinute]
                         )
@@ -894,7 +894,7 @@ private struct PhoneEditRecordSheet: View {
                     if let previewDate {
                         Text(newMode == .fromNow
                              ? "从现在起 · \(fmt(previewDate))"
-                             : "预计收菜：\(fmt(previewDate))")
+                             : "预计提醒：\(fmt(previewDate))")
                             .font(.footnote)
                             .foregroundStyle(.secondary)
                     }
@@ -902,7 +902,7 @@ private struct PhoneEditRecordSheet: View {
                     Button {
                         addCycle()
                     } label: {
-                        Label("添加这一茬", systemImage: "plus")
+                        Label("添加这一次提醒", systemImage: "plus")
                     }
                     .disabled(!canAddCycle)
                 }
@@ -925,7 +925,7 @@ private struct PhoneEditRecordSheet: View {
                 }
             }
             .confirmationDialog(
-                "删除这一茬？",
+                "删除这一次提醒？",
                 isPresented: Binding(
                     get: { pendingCycleDelete != nil },
                     set: { if !$0 { pendingCycleDelete = nil } }
@@ -944,8 +944,8 @@ private struct PhoneEditRecordSheet: View {
                 if let cycle = pendingCycleDelete {
                     let remaining = harvests.count - 1
                     Text(remaining == 0
-                         ? "收菜时间 \(fmt(cycle.date))。这是唯一一茬，删除后需要重新添加才能保存。"
-                         : "收菜时间 \(fmt(cycle.date))。删除后还剩 \(remaining) 茬。")
+                         ? "提醒时间 \(fmt(cycle.date))。这是唯一一次提醒，删除后需要重新添加才能保存。"
+                         : "提醒时间 \(fmt(cycle.date))。删除后还剩 \(remaining) 次。")
                 }
             }
         }
@@ -1047,15 +1047,15 @@ private final class PhoneCropNotifier: NSObject, UNUserNotificationCenterDelegat
             let allCycles = record.harvests.sorted { $0.date < $1.date }
             for cycle in allCycles where !cycle.harvested {
                 let position = (allCycles.firstIndex { $0.id == cycle.id } ?? 0) + 1
-                let suffix = allCycles.count > 1 ? "（第 \(position)/\(allCycles.count) 茬）" : ""
+                let suffix = allCycles.count > 1 ? "（第 \(position)/\(allCycles.count) 次）" : ""
                 let timestamp = Int(cycle.date.timeIntervalSince1970)
 
                 if cycle.date > now {
                     add(
                         center,
                         id: "phone-at-\(record.id)-\(timestamp)",
-                        title: "\(record.name) 可以收菜了\(suffix)",
-                        body: "收菜时间 \(fmt(cycle.date))，快去看看",
+                        title: "\(record.name) 时间到了\(suffix)",
+                        body: "提醒时间 \(fmt(cycle.date))，快去看看",
                         date: cycle.date
                     )
                 }
@@ -1065,8 +1065,8 @@ private final class PhoneCropNotifier: NSObject, UNUserNotificationCenterDelegat
                     add(
                         center,
                         id: "phone-pre-\(record.id)-\(timestamp)",
-                        title: "\(record.name) 即将可收菜\(suffix)",
-                        body: "还有 1 分钟 · 收菜时间 \(fmt(cycle.date))",
+                        title: "\(record.name) 即将到时间\(suffix)",
+                        body: "还有 1 分钟 · 提醒时间 \(fmt(cycle.date))",
                         date: reminder
                     )
                 }

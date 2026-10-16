@@ -6,14 +6,14 @@ import os.log
 import WidgetKit
 #endif
 
-/// 一茬收菜（同一棵菜反复种续期时，每次采收是一个独立条目，可单独编辑）
+/// 单条提醒时间（同一事项可追加多次提醒，每个时间点都可单独编辑）
 struct HarvestCycle: Codable, Equatable, Identifiable {
     /// 稳定 id：列表行靠它做 Identifiable，编辑/删除都按 id 定位，不能用下标
     var id: String
-    /// 这一茬的收菜时间
+    /// 这一次提醒的提醒时间
     var date: Date
-    /// 是否已采收。续期场景必须区分「已收」和「已过期但还没收」：
-    /// 前者已归档，后者还在等用户去收（界面上高亮可收获）。
+    /// 是否已完成。续期场景必须区分「已完成」和「已过期但还没收」：
+    /// 前者已归档，后者还在等用户去收（界面上高亮已到期）。
     var harvested: Bool
 
     init(id: String = UUID().uuidString, date: Date, harvested: Bool = false) {
@@ -23,41 +23,41 @@ struct HarvestCycle: Codable, Equatable, Identifiable {
     }
 }
 
-/// 单条收菜记录（两种 target 共用，通过 App Group 的 UserDefaults 持久化）
+/// 单条提醒记录（两种 target 共用，通过 App Group 的 UserDefaults 持久化）
 struct CropRecord: Identifiable, Codable, Equatable {
     let id: String
     let name: String
     let colorHex: String
     let minutes: Int
     let plantedAt: Date
-    /// 各茬收菜记录（反复续期）。升序；空数组仅可能来自异常数据。
+    /// 各次提醒记录（反复续期）。升序；空数组仅可能来自异常数据。
     var harvests: [HarvestCycle] = []
-    /// 种菜备注说明（可选，可在编辑弹窗修改；旧数据无此字段时解码为 nil）
+    /// 新建事项备注说明（可选，可在编辑弹窗修改；旧数据无此字段时解码为 nil）
     var note: String?
 
-    /// 全部收菜时间，升序
+    /// 全部提醒时间，升序
     var allHarvests: [Date] { harvests.map(\.date).sorted() }
 
-    /// 下一茬待收时间：未采收且尚未到点的那一茬里最早的时间
+    /// 下一次提醒待提醒时间：未处理且尚未到点的那一次提醒里最早的时间
     var nextHarvest: Date? {
         let n = Date()
         return harvests.filter { !$0.harvested && $0.date > n }.map(\.date).min()
     }
 
-    /// 可收获：存在未采收、但时间已到的茬
+    /// 已到期：存在未处理、但时间已到的次
     var isReady: Bool {
         let n = Date()
         return harvests.contains { !$0.harvested && $0.date <= n }
     }
 
-    /// 全部了结：每一茬都已采收或已过期。「清除已收获」只清这类，
-    /// 否则会误删还剩后续采收的记录。
+    /// 全部了结：每一次提醒都已完成或已过期。「清理已结束」只清这类，
+    /// 否则会误删还剩后续处理的记录。
     var isFullyHarvested: Bool {
         let n = Date()
         return harvests.allSatisfy { $0.harvested || $0.date <= n }
     }
 
-    /// 待收茬数
+    /// 待提醒次数
     var pendingCount: Int {
         let n = Date()
         return harvests.filter { !$0.harvested && $0.date > n }.count
@@ -126,7 +126,7 @@ struct CropRecord: Identifiable, Codable, Equatable {
     }
 }
 
-/// 蔬菜预设（默认成熟分钟数）
+/// 模板预设（默认提醒间隔（分钟））
 struct CropPreset: Codable, Identifiable, Equatable {
     let id: String
     let name: String
@@ -148,7 +148,7 @@ enum CropStore {
     // 存储根目录。优先 App Group 共享容器（Widget 与主 App 才能互通）；
 // 关键：不能只看 containerURL != nil —— 容器路径存在但目录不可写（常见于
     // 目录由其它签名身份创建、本App adhoc 签名无写权限）时，写盘依然会失败，
-    // 表现为「点��种下并记录」完全没反应。因此必须做真实写探测。
+    // 表现为「点��添加提醒」完全没反应。因此必须做真实写探测。
     //
     // 注意：此处绝不能调用 diag() —— diag 依赖 storageRoot，会触发
     // _dispatch_once 重入 → 无限递归 → SIGTRAP 崩溃。
@@ -276,18 +276,18 @@ enum CropStore {
     private static var hiddenBuiltinsURL: URL { storageRoot.appendingPathComponent("hiddenBuiltins.json") }
 
     private static let builtinPresets: [CropPreset] = [
-        CropPreset(id: "carrot", name: "胡萝卜", colorHex: "FF8C42", minutes: 20),
-        CropPreset(id: "cabbage", name: "白菜", colorHex: "7AC74F", minutes: 40),
-        CropPreset(id: "tomato", name: "番茄", colorHex: "E63946", minutes: 60),
-        CropPreset(id: "corn", name: "玉米", colorHex: "FFD23F", minutes: 90),
-        CropPreset(id: "potato", name: "土豆", colorHex: "C08457", minutes: 30),
-        CropPreset(id: "strawberry", name: "草莓", colorHex: "F06595", minutes: 45),
+        CropPreset(id: "carrot", name: "快速事项", colorHex: "FF8C42", minutes: 20),
+        CropPreset(id: "cabbage", name: "常规事项", colorHex: "7AC74F", minutes: 40),
+        CropPreset(id: "tomato", name: "专注事项", colorHex: "E63946", minutes: 60),
+        CropPreset(id: "corn", name: "长时事项", colorHex: "FFD23F", minutes: 90),
+        CropPreset(id: "potato", name: "短时提醒", colorHex: "C08457", minutes: 30),
+        CropPreset(id: "strawberry", name: "日常安排", colorHex: "F06595", minutes: 45),
     ]
 
-    /// 内置蔬菜定义（供管理界面展示）
+    /// 内置模板定义（供管理界面展示）
     static var builtinCrops: [CropPreset] { builtinPresets }
 
-    /// 被用户删除掉的内置蔬菜 id（持久化，实现「默认蔬菜也能删除」）
+    /// 被用户删除掉的内置模板 id（持久化，实现「默认模板也能删除」）
     private static var hiddenBuiltinIDs: Set<String> {
         guard let data = try? Data(contentsOf: hiddenBuiltinsURL) else { return [] }
         return Set((try? JSONDecoder().decode([String].self, from: data)) ?? [])
@@ -300,11 +300,11 @@ enum CropStore {
             try data.write(to: url, options: .atomic)
             reloadWidget()
         } catch {
-            diag("隐藏内置蔬菜写入失败 \(url.path) -> \(error)")
+            diag("隐藏内置模板写入失败 \(url.path) -> \(error)")
         }
     }
 
-    /// 可选蔬菜 = 未被删除的内置 + 自定义
+    /// 可选模板 = 未被删除的内置 + 自定义
     static var presets: [CropPreset] {
         let hidden = hiddenBuiltinIDs
         return builtinPresets.filter { !hidden.contains($0.id) } + customCrops()
@@ -317,7 +317,7 @@ enum CropStore {
         return (try? JSONDecoder().decode([CropPreset].self, from: data)) ?? []
     }
 
-    /// 新增自定义蔬菜（支持自定义名字 + 颜色 + 默认成熟时长），返回新蔬菜
+    /// 新增自定义模板（支持自定义名字 + 颜色 + 默认提醒间隔时长），返回新模板
     @discardableResult
     static func addCustomCrop(name: String, colorHex: String? = nil, minutes: Int = 30) -> CropPreset {
         let hex = (colorHex ?? cropPalette[customCrops().count % cropPalette.count])
@@ -329,12 +329,12 @@ enum CropStore {
         return c
     }
 
-    /// 删除自定义蔬菜
+    /// 删除自定义模板
     static func removeCustomCrop(id: String) {
         saveCustom(customCrops().filter { $0.id != id })
     }
 
-    /// 修改自定义蔬菜（名称 / 颜色 / 默认时长）
+    /// 修改自定义模板（名称 / 颜色 / 默认时长）
     static func updateCustomCrop(_ preset: CropPreset) {
         var list = customCrops()
         if let i = list.firstIndex(where: { $0.id == preset.id }) {
@@ -343,26 +343,26 @@ enum CropStore {
         }
     }
 
-    /// 删除内置蔬菜：记入隐藏列表（不破坏内置定义，可一键恢复）
+    /// 删除内置模板：记入隐藏列表（不破坏内置定义，可一键恢复）
     static func hideBuiltinCrop(id: String) {
         var ids = hiddenBuiltinIDs
         ids.insert(id)
         saveHiddenBuiltinIDs(ids)
     }
 
-    /// 恢复单个内置蔬菜
+    /// 恢复单个内置模板
     static func restoreBuiltinCrop(id: String) {
         var ids = hiddenBuiltinIDs
         ids.remove(id)
         saveHiddenBuiltinIDs(ids)
     }
 
-    /// 恢复全部内置蔬菜
+    /// 恢复全部内置模板
     static func restoreAllBuiltinCrops() {
         saveHiddenBuiltinIDs([])
     }
 
-    /// 当前被删除的内置蔬菜列表（管理界面展示「恢复」用）
+    /// 当前被删除的内置模板列表（管理界面展示「恢复」用）
     static func hiddenBuiltinCrops() -> [CropPreset] {
         let hidden = hiddenBuiltinIDs
         return builtinPresets.filter { hidden.contains($0.id) }
@@ -384,7 +384,7 @@ enum CropStore {
             try data.write(to: url, options: .atomic)
             reloadWidget()
         } catch {
-            diag("自定义蔬菜写入失败 \(url.path) -> \(error)")
+            diag("自定义模板写入失败 \(url.path) -> \(error)")
         }
     }
 
@@ -416,7 +416,7 @@ enum CropStore {
         #endif
     }
 
-    /// 填入一个数字（成熟分钟数）+ 选定蔬菜 -> 新增一条收菜记录
+    /// 填入一个数字（提醒间隔（分钟））+ 选定模板 -> 新增一条提醒记录
     static func add(preset: CropPreset, minutes: Int, note: String? = nil) {
         var records = load()
         let now = Date()
@@ -433,7 +433,7 @@ enum CropStore {
         save(records)
     }
 
-    /// 按指定收菜时间新增一条记录（"新增时间"模式）
+    /// 按指定提醒时间新增一条记录（"新增时间"模式）
     static func addWithHarvestTime(preset: CropPreset, harvestAt: Date, note: String? = nil) {
         var records = load()
         let now = Date()
@@ -450,7 +450,7 @@ enum CropStore {
         save(records)
     }
 
-    /// 编辑已有记录（按 id 替换）-> 对应收菜时间变更
+    /// 编辑已有记录（按 id 替换）-> 对应提醒时间变更
     static func update(_ updated: CropRecord) {
         var list = load()
         if let i = list.firstIndex(where: { $0.id == updated.id }) {
@@ -459,7 +459,7 @@ enum CropStore {
         }
     }
 
-    /// 续期：在已有记录后追加一茬（新菜重复种，不必新建记录）
+    /// 续期：在已有记录后追加一次提醒（新菜重复种，不必新建记录）
     static func renew(_ record: CropRecord, after date: Date) {
         var updated = record
         updated.harvests.append(HarvestCycle(date: date))
@@ -467,7 +467,7 @@ enum CropStore {
         update(updated)
     }
 
-    /// 标记/取消标记某一茬已采收。续期时用得上：收了这一茬，再续下一茬。
+    /// 标记/取消标记某一次提醒已完成。续期时用得上：收了这一次提醒，再续下一次提醒。
     static func setHarvested(recordID: String, cycleID: String, _ harvested: Bool) {
         var list = load()
         guard let i = list.firstIndex(where: { $0.id == recordID }),
@@ -485,7 +485,7 @@ enum CropStore {
         var exportedAt: Date = Date()
         var records: [CropRecord] = []
         var customCrops: [CropPreset] = []
-        /// 被删除的内置蔬菜 id
+        /// 被删除的内置模板 id
         var hiddenBuiltins: [String] = []
     }
 
@@ -512,12 +512,12 @@ enum CropStore {
         var text: String {
             switch mode {
             case .replace:
-                return "已替换：记录 \(recordsTotal) 条 · 蔬菜 \(cropsTotal) 个"
+                return "已替换：记录 \(recordsTotal) 条 · 模板 \(cropsTotal) 个"
             case .merge:
                 var parts: [String] = []
                 parts.append(recordsAdded > 0 ? "新增记录 \(recordsAdded) 条" : "无新增记录")
                 if recordsOverwritten > 0 { parts.append("覆盖 \(recordsOverwritten) 条") }
-                var c: [String] = [cropsAdded > 0 ? "新增蔬菜 \(cropsAdded) 个" : "无新增蔬菜"]
+                var c: [String] = [cropsAdded > 0 ? "新增模板 \(cropsAdded) 个" : "无新增模板"]
                 if cropsOverwritten > 0 { c.append("覆盖 \(cropsOverwritten) 个") }
                 return "已合并：" + parts.joined(separator: " · ") + " · " + c.joined(separator: " ")
             }
@@ -710,14 +710,14 @@ extension Color {
 
 /// 标签分组：用于高亮区分同一类预选值
 enum NotePresetGroup: String, CaseIterable, Identifiable {
-    case bean = "豆"          // 大豆/绿豆/红豆/蚕豆 种子
-    case sandalwood = "名贵"  // 麻梨/老山檀/奇楠沉香 树苗
+    case work = "工作"
+    case personal = "生活"
     var id: String { rawValue }
-    /// 该组的主题色：豆=琥珀，名贵=紫
+    /// 该组的主题色：工作=琥珀，生活=紫
     var color: Color {
         switch self {
-        case .bean:       return Color(red: 0.93, green: 0.60, blue: 0.18)
-        case .sandalwood: return Color(red: 0.58, green: 0.36, blue: 0.82)
+        case .work:     return Color(red: 0.93, green: 0.60, blue: 0.18)
+        case .personal: return Color(red: 0.58, green: 0.36, blue: 0.82)
         }
     }
 }
@@ -735,31 +735,32 @@ struct NotePreset: Identifiable {
 /// 备注预选值清单与渲染。预选栏（录入/编辑）与记录行（主 App / Widget）共用，
 /// 保证三处展示一致。
 enum NotePresets {
-    /// 种子预选值（第一行），豆组高亮
-    static let seeds: [NotePreset] = [
-        NotePreset("甘薯种子"), NotePreset("番茄种子"), NotePreset("白菜种子"), NotePreset("酸模种子"),
-        NotePreset("大豆种子", group: .bean), NotePreset("南瓜种子"), NotePreset("茄子种子"),
-        NotePreset("千穗谷种子"), NotePreset("小麦种子"),
-        NotePreset("绿豆种子", group: .bean), NotePreset("西瓜种子"), NotePreset("辣椒种子"),
-        NotePreset("雪绯花种子"), NotePreset("大麦种子"),
-        NotePreset("红豆种子", group: .bean), NotePreset("豆薯种子"), NotePreset("枸杞种子"),
-        NotePreset("甘蓝种子"), NotePreset("山菊种子"),
-        NotePreset("蚕豆种子", group: .bean), NotePreset("冬瓜种子"), NotePreset("土豆种子"),
-        NotePreset("青桑种子"), NotePreset("燕麦种子"), NotePreset("豌豆种子")
+    /// 工作事项备注预选值
+    static let workItems: [NotePreset] = [
+        NotePreset("会议准备", group: .work), NotePreset("邮件回复", group: .work),
+        NotePreset("文档整理"), NotePreset("报告撰写"), NotePreset("需求跟进"),
+        NotePreset("代码审查"), NotePreset("测试验证"), NotePreset("客户沟通"),
+        NotePreset("数据核对"), NotePreset("审批处理"), NotePreset("方案设计"),
+        NotePreset("任务复盘"), NotePreset("日程安排"), NotePreset("资料阅读"),
+        NotePreset("流程优化"), NotePreset("临时处理"), NotePreset("会议纪要"),
+        NotePreset("事项确认"), NotePreset("信息同步"), NotePreset("版本发布"),
+        NotePreset("问题排查"), NotePreset("文件归档"), NotePreset("团队协作"),
+        NotePreset("学习培训")
     ]
 
-    /// 树苗预选值（第二行），名贵组高亮
-    static let seedlings: [NotePreset] = [
-        NotePreset("乌木树苗"), NotePreset("金丝楠树苗"), NotePreset("黄花梨树苗"),
-        NotePreset("小叶紫檀树苗"), NotePreset("奇楠沉香树苗", group: .sandalwood),
-        NotePreset("枣树苗"), NotePreset("桃树苗"), NotePreset("黄杨树苗"), NotePreset("桑树苗"),
-        NotePreset("麻梨树苗", group: .sandalwood), NotePreset("鸡翅树苗"), NotePreset("黄檀树苗"),
-        NotePreset("大红酸枝苗"), NotePreset("老山檀树苗", group: .sandalwood), NotePreset("崖柏树苗")
+    /// 生活事项备注预选值
+    static let personalItems: [NotePreset] = [
+        NotePreset("午休", group: .personal), NotePreset("用餐", group: .personal),
+        NotePreset("喝水"), NotePreset("走动"), NotePreset("通勤"),
+        NotePreset("预约"), NotePreset("采购"), NotePreset("阅读"),
+        NotePreset("学习"), NotePreset("运动"), NotePreset("缴费"),
+        NotePreset("家务"), NotePreset("出行"), NotePreset("健康"),
+        NotePreset("休息"), NotePreset("其他")
     ]
 
     /// 给定预选文本，返回其所属分组（nil = 普通项，不高亮）
     static func groupOf(_ text: String) -> NotePresetGroup? {
-        for p in seeds + seedlings where p.id == text {
+        for p in workItems + personalItems where p.id == text {
             return p.group
         }
         return nil
@@ -794,7 +795,7 @@ enum NotePresets {
         return Text(result)
     }
 
-    /// 记录列表里的备注按类别拆成两行：种子在第一行，树苗在第二行。
+    /// 记录列表里的备注按类别拆成两行：工作在第一行，生活在第二行。
     /// 未识别的自由文本保留在第一行；没有任何预选标签时原样显示。
     static func recordRows(for note: String) -> [String] {
         let delimiters = CharacterSet(charactersIn: "、，,;；。")
@@ -802,30 +803,22 @@ enum NotePresets {
             .flatMap { $0.components(separatedBy: .whitespacesAndNewlines) }
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty }
-        let seedIDs = Set(seeds.flatMap {
-            [$0.id, $0.id.replacingOccurrences(of: "种子", with: "")]
-        } + ["雪菲花"])
-        let seedlingIDs = Set(seedlings.flatMap {
-            [
-                $0.id,
-                $0.id.replacingOccurrences(of: "树苗", with: "")
-                    .replacingOccurrences(of: "苗", with: "")
-            ]
-        } + ["老山颤"])
-        let hasPreset = tokens.contains { seedIDs.contains($0) || seedlingIDs.contains($0) }
+        let workIDs = Set(workItems.map(\.id))
+        let personalIDs = Set(personalItems.map(\.id))
+        let hasPreset = tokens.contains { workIDs.contains($0) || personalIDs.contains($0) }
         guard hasPreset else { return [note] }
 
-        let seedAndOtherTokens = tokens.filter { !seedlingIDs.contains($0) }
-        let seedlingTokens = tokens.filter { seedlingIDs.contains($0) }
+        let workAndOtherTokens = tokens.filter { !personalIDs.contains($0) }
+        let personalTokens = tokens.filter { personalIDs.contains($0) }
         return [
-            seedAndOtherTokens.joined(separator: "、"),
-            seedlingTokens.joined(separator: "、")
+            workAndOtherTokens.joined(separator: "、"),
+            personalTokens.joined(separator: "、")
         ]
         .filter { !$0.isEmpty }
     }
 }
 
-/// 收菜记录中的备注按「种子 / 树苗」分成两行，并沿用分组高亮。
+/// 提醒记录中的备注按「工作 / 生活」分成两行，并沿用分组高亮。
 struct NotePresetRecordNote: View {
     let note: String
 
@@ -846,7 +839,7 @@ struct NotePresetRecordNote: View {
 
 // MARK: - 时间格式化（主 App 与 Widget 共用，保证两端展示一致）
 
-/// 收菜时间统一格式：MM-dd HH:mm（与 App 记录行一致）
+/// 提醒时间统一格式：MM-dd HH:mm（与 App 记录行一致）
 func fmt(_ d: Date) -> String {
     let f = DateFormatter()
     f.dateFormat = "MM-dd HH:mm"
@@ -866,9 +859,9 @@ func remainText(_ target: Date, now: Date = Date()) -> String {
         : String(format: "%02d:%02d", m, sec)
 }
 
-/// 按记录倒计时：有多次采收时对准「下一茬」而不是首次，
-/// 否则首次过了之后会永远停在 00:00，看不出还要等多久收第二茬。
+/// 按记录倒计时：有多次处理时对准「下一次提醒」而不是首次，
+/// 否则首次过了之后会永远停在 00:00，看不出还要等多久收第二次。
 func remainText(_ r: CropRecord) -> String {
-    guard let next = r.nextHarvest else { return "可收获" }
+    guard let next = r.nextHarvest else { return "已到期" }
     return remainText(next)
 }
