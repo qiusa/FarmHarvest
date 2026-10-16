@@ -334,8 +334,8 @@ struct ContentView: View {
                 .frame(minWidth: inputCollapsed ? compactWindowMinimumWidth : 900)
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             }
-            .navigationTitle("农场收菜")
-            .navigationSubtitle("桌面实时倒计时")
+            .navigationTitle("事项提醒")
+            .navigationSubtitle("桌面倒计时")
             .background(.clear)
             .onAppear {
                 records = CropStore.load()

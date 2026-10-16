@@ -407,8 +407,8 @@ struct FarmHarvestWidget: Widget {
         StaticConfiguration(kind: kind, provider: Provider()) { entry in
             FarmHarvestWidgetEntryView(entry: entry)
         }
-        .configurationDisplayName("农场收菜")
-        .description("记录蔬菜收菜时间，使用上下箭头翻页浏览，桌面实时倒计时。")
+        .configurationDisplayName("事项提醒")
+        .description("记录事项时间，使用上下箭头翻页浏览，桌面倒计时。")
         .supportedFamilies([.systemSmall, .systemMedium, .systemLarge])
     }
 }

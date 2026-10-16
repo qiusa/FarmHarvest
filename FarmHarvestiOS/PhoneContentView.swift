@@ -56,7 +56,7 @@ struct PhoneContentView: View {
 
             NavigationStack {
                 recordsList
-                    .navigationTitle("收菜记录")
+                    .navigationTitle("事项记录")
                     .toolbar {
                         ToolbarItem(placement: .topBarTrailing) {
                             Button("清除已收获") {

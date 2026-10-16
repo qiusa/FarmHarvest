@@ -14,6 +14,6 @@
 		</dict>
 	</dict>
 	<key>NSLocalNetworkUsageDescription</key>
-	<string>连接可信局域网中的共享目录，上传和下载收菜备份。</string>
+	<string>连接可信局域网中的共享目录，上传和下载事项数据备份。</string>
 </dict>
 </plist>
