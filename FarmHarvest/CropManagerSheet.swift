@@ -37,6 +37,8 @@ struct CropManagerSheet: View {
     @State private var importMode: CropStore.ImportMode = .merge
     @State private var isImportingRemoteBackup = false
     @State private var isUploadingBackup = false
+    @AppStorage(CropStore.lastSuccessfulUploadTimestampKey)
+    private var lastSuccessfulUploadTimestamp: Double = 0
     @State private var showRemoteReplaceConfirmation = false
     @State private var pendingRemoteImportURL: URL?
 
@@ -349,15 +351,6 @@ struct CropManagerSheet: View {
             VStack(alignment: .leading, spacing: 16) {
                 GlassPanel {
                     VStack(alignment: .leading, spacing: 16) {
-                        LabeledField("导出") {
-                            Button { startExport() } label: {
-                                Label("导出备份…", systemImage: "square.and.arrow.up")
-                            }
-                            .buttonStyle(.bordered)
-                        }
-
-                        Divider()
-
                         VStack(alignment: .leading, spacing: 10) {
                             Text("上传到共享目录")
                                 .font(.subheadline).foregroundStyle(.secondary)
@@ -380,6 +373,19 @@ struct CropManagerSheet: View {
                             }
                             .buttonStyle(.bordered)
                             .disabled(isUploadingBackup)
+                            Text(lastSuccessfulUploadTimestamp > 0
+                                 ? "最近上传：\(Date(timeIntervalSince1970: lastSuccessfulUploadTimestamp).formatted(date: .numeric, time: .shortened))"
+                                 : "最近上传：暂无")
+                                .font(.caption).foregroundStyle(.secondary)
+                        }
+
+                        Divider()
+
+                        LabeledField("导出") {
+                            Button { startExport() } label: {
+                                Label("导出备份…", systemImage: "square.and.arrow.up")
+                            }
+                            .buttonStyle(.bordered)
                         }
 
                         Divider()
@@ -563,6 +569,7 @@ struct CropManagerSheet: View {
         do {
             let data = try CropStore.exportBackupJSON()
             let result = try await SourceFileUploader.uploadBackup(data: data)
+            lastSuccessfulUploadTimestamp = Date().timeIntervalSince1970
             if result.fileName == CropStore.sourceBackupFileName {
                 show("上传成功：\(result.fileName)，可从固定地址导入。")
             } else {

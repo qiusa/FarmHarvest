@@ -20,6 +20,8 @@ struct PhoneContentView: View {
     @State private var remoteImportMode: CropStore.ImportMode = .merge
     @State private var isImportingRemoteBackup = false
     @State private var isUploadingBackup = false
+    @AppStorage(CropStore.lastSuccessfulUploadTimestampKey)
+    private var lastSuccessfulUploadTimestamp: Double = 0
     @State private var showRemoteReplaceConfirmation = false
     @State private var pendingRemoteImportURL: URL?
     @State private var message: String?
@@ -401,6 +403,12 @@ struct PhoneContentView: View {
                     }
                 }
                 .disabled(isUploadingBackup)
+
+                Text(lastSuccessfulUploadTimestamp > 0
+                     ? "最近上传：\(Date(timeIntervalSince1970: lastSuccessfulUploadTimestamp).formatted(date: .numeric, time: .shortened))"
+                     : "最近上传：暂无")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
             }
 
             Section("远程备份地址") {
@@ -501,6 +509,7 @@ struct PhoneContentView: View {
         do {
             let data = try CropStore.exportBackupJSON()
             let result = try await SourceFileUploader.uploadBackup(data: data)
+            lastSuccessfulUploadTimestamp = Date().timeIntervalSince1970
             if result.fileName == CropStore.sourceBackupFileName {
                 message = "上传成功：\(result.fileName)，可从固定地址导入。"
             } else {
