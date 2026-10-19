@@ -710,14 +710,14 @@ extension Color {
 
 /// 标签分组：用于高亮区分同一类预选值
 enum NotePresetGroup: String, CaseIterable, Identifiable {
-    case work = "工作"
-    case personal = "生活"
+    case bean = "豆"          // 大豆/绿豆/红豆/蚕豆 种子
+    case sandalwood = "名贵"  // 麻梨/老山檀/奇楠沉香 树苗
     var id: String { rawValue }
-    /// 该组的主题色：工作=琥珀，生活=紫
+    /// 该组的主题色：豆=琥珀，名贵=紫
     var color: Color {
         switch self {
-        case .work:     return Color(red: 0.93, green: 0.60, blue: 0.18)
-        case .personal: return Color(red: 0.58, green: 0.36, blue: 0.82)
+        case .bean:       return Color(red: 0.93, green: 0.60, blue: 0.18)
+        case .sandalwood: return Color(red: 0.58, green: 0.36, blue: 0.82)
         }
     }
 }
@@ -735,32 +735,31 @@ struct NotePreset: Identifiable {
 /// 备注预选值清单与渲染。预选栏（录入/编辑）与记录行（主 App / Widget）共用，
 /// 保证三处展示一致。
 enum NotePresets {
-    /// 工作事项备注预选值
-    static let workItems: [NotePreset] = [
-        NotePreset("会议准备", group: .work), NotePreset("邮件回复", group: .work),
-        NotePreset("文档整理"), NotePreset("报告撰写"), NotePreset("需求跟进"),
-        NotePreset("代码审查"), NotePreset("测试验证"), NotePreset("客户沟通"),
-        NotePreset("数据核对"), NotePreset("审批处理"), NotePreset("方案设计"),
-        NotePreset("任务复盘"), NotePreset("日程安排"), NotePreset("资料阅读"),
-        NotePreset("流程优化"), NotePreset("临时处理"), NotePreset("会议纪要"),
-        NotePreset("事项确认"), NotePreset("信息同步"), NotePreset("版本发布"),
-        NotePreset("问题排查"), NotePreset("文件归档"), NotePreset("团队协作"),
-        NotePreset("学习培训")
+    /// 种子预选值（第一行），豆组高亮
+    static let seeds: [NotePreset] = [
+        NotePreset("甘薯种子"), NotePreset("番茄种子"), NotePreset("白菜种子"), NotePreset("酸模种子"),
+        NotePreset("大豆种子", group: .bean), NotePreset("南瓜种子"), NotePreset("茄子种子"),
+        NotePreset("千穗谷种子"), NotePreset("小麦种子"),
+        NotePreset("绿豆种子", group: .bean), NotePreset("西瓜种子"), NotePreset("辣椒种子"),
+        NotePreset("雪绯花种子"), NotePreset("大麦种子"),
+        NotePreset("红豆种子", group: .bean), NotePreset("豆薯种子"), NotePreset("枸杞种子"),
+        NotePreset("甘蓝种子"), NotePreset("山菊种子"),
+        NotePreset("蚕豆种子", group: .bean), NotePreset("冬瓜种子"), NotePreset("土豆种子"),
+        NotePreset("青桑种子"), NotePreset("燕麦种子"), NotePreset("豌豆种子", group: .bean)
     ]
 
-    /// 生活事项备注预选值
-    static let personalItems: [NotePreset] = [
-        NotePreset("午休", group: .personal), NotePreset("用餐", group: .personal),
-        NotePreset("喝水"), NotePreset("走动"), NotePreset("通勤"),
-        NotePreset("预约"), NotePreset("采购"), NotePreset("阅读"),
-        NotePreset("学习"), NotePreset("运动"), NotePreset("缴费"),
-        NotePreset("家务"), NotePreset("出行"), NotePreset("健康"),
-        NotePreset("休息"), NotePreset("其他")
+    /// 树苗预选值（第二行），名贵组高亮
+    static let seedlings: [NotePreset] = [
+        NotePreset("乌木树苗"), NotePreset("金丝楠树苗"), NotePreset("黄花梨树苗"),
+        NotePreset("小叶紫檀树苗"), NotePreset("奇楠沉香树苗", group: .sandalwood),
+        NotePreset("枣树苗"), NotePreset("桃树苗"), NotePreset("黄杨树苗"), NotePreset("桑树苗"),
+        NotePreset("麻梨树苗", group: .sandalwood), NotePreset("鸡翅树苗"), NotePreset("黄檀树苗"),
+        NotePreset("大红酸枝苗"), NotePreset("老山檀树苗", group: .sandalwood), NotePreset("崖柏树苗")
     ]
 
     /// 给定预选文本，返回其所属分组（nil = 普通项，不高亮）
     static func groupOf(_ text: String) -> NotePresetGroup? {
-        for p in workItems + personalItems where p.id == text {
+        for p in seeds + seedlings where p.id == text {
             return p.group
         }
         return nil
@@ -795,7 +794,7 @@ enum NotePresets {
         return Text(result)
     }
 
-    /// 记录列表里的备注按类别拆成两行：工作在第一行，生活在第二行。
+    /// 记录列表里的备注按类别拆成两行：种子在第一行，树苗在第二行。
     /// 未识别的自由文本保留在第一行；没有任何预选标签时原样显示。
     static func recordRows(for note: String) -> [String] {
         let delimiters = CharacterSet(charactersIn: "、，,;；。")
@@ -803,22 +802,30 @@ enum NotePresets {
             .flatMap { $0.components(separatedBy: .whitespacesAndNewlines) }
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty }
-        let workIDs = Set(workItems.map(\.id))
-        let personalIDs = Set(personalItems.map(\.id))
-        let hasPreset = tokens.contains { workIDs.contains($0) || personalIDs.contains($0) }
+        let seedIDs = Set(seeds.flatMap {
+            [$0.id, $0.id.replacingOccurrences(of: "种子", with: "")]
+        } + ["雪菲花"])
+        let seedlingIDs = Set(seedlings.flatMap {
+            [
+                $0.id,
+                $0.id.replacingOccurrences(of: "树苗", with: "")
+                    .replacingOccurrences(of: "苗", with: "")
+            ]
+        } + ["老山颤"])
+        let hasPreset = tokens.contains { seedIDs.contains($0) || seedlingIDs.contains($0) }
         guard hasPreset else { return [note] }
 
-        let workAndOtherTokens = tokens.filter { !personalIDs.contains($0) }
-        let personalTokens = tokens.filter { personalIDs.contains($0) }
+        let seedAndOtherTokens = tokens.filter { !seedlingIDs.contains($0) }
+        let seedlingTokens = tokens.filter { seedlingIDs.contains($0) }
         return [
-            workAndOtherTokens.joined(separator: "、"),
-            personalTokens.joined(separator: "、")
+            seedAndOtherTokens.joined(separator: "、"),
+            seedlingTokens.joined(separator: "、")
         ]
         .filter { !$0.isEmpty }
     }
 }
 
-/// 提醒记录中的备注按「工作 / 生活」分成两行，并沿用分组高亮。
+/// 收菜记录中的备注按「种子 / 树苗」分成两行，并沿用分组高亮。
 struct NotePresetRecordNote: View {
     let note: String
 

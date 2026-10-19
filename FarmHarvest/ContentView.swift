@@ -1703,9 +1703,9 @@ struct EditRecordSheet: View {
 // （旧 AddCropSheet 已移除，新实现见 CropManagerSheet.swift）
 
 /// 备注说明的预选标签栏：点标签可多选填入，再次点击取消，自动去重。
-/// 两类预选值各占一行：第一行工作事项，第二行生活事项。
+/// 两类预选值各占一行：第一行「种子」、第二行「树苗」。
 /// 内部以「、」作为选中项的分隔符，noteText 同时仍是自由文本（可手写）。
-/// 部分标签按类别高亮，用色点 + 同色描边区分。
+/// 部分标签属于同一类（如豆类、名贵树苗），用色点 + 同色描边高亮区分。
 struct NotePresetBar: View {
     @Binding var noteText: String
 
@@ -1720,8 +1720,8 @@ struct NotePresetBar: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            presetRow(NotePresets.workItems, label: "工作")
-            presetRow(NotePresets.personalItems, label: "生活")
+            presetRow(NotePresets.seeds, label: "种子")
+            presetRow(NotePresets.seedlings, label: "树苗")
             HStack(spacing: 14) {
                 ForEach(NotePresetGroup.allCases) { g in
                     HStack(spacing: 4) {
