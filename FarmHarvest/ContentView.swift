@@ -203,7 +203,7 @@ struct GlassPanel<Content: View>: View {
     }
 }
 
-/// SwiftUI 的最小宽度变更不一定会同步下发到已创建的 NSWindow，
+/// SwiftUI 的最小尺寸变更不一定会同步下发到已创建的 NSWindow，
 /// 因此折叠侧栏时也显式更新原生窗口的尺寸限制。
 private struct WindowMinimumSizeConfigurator: NSViewRepresentable {
     let minWidth: CGFloat
@@ -236,7 +236,41 @@ private final class WindowMinimumSizeView: NSView {
     }
 }
 
+/// Exposes the hosting NSWindow to SwiftUI so window-level and key-state changes
+/// can be handled from the view lifecycle rather than a hidden view's observers.
+private struct WindowAccessor: NSViewRepresentable {
+    let onWindowChanged: (NSWindow?) -> Void
+
+    func makeNSView(context: Context) -> WindowAccessorView {
+        let view = WindowAccessorView()
+        view.onWindowChanged = onWindowChanged
+        return view
+    }
+
+    func updateNSView(_ nsView: WindowAccessorView, context: Context) {
+        nsView.onWindowChanged = onWindowChanged
+        nsView.reportWindowIfChanged()
+    }
+}
+
+private final class WindowAccessorView: NSView {
+    var onWindowChanged: ((NSWindow?) -> Void)?
+    private weak var lastReportedWindow: NSWindow?
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        reportWindowIfChanged()
+    }
+
+    func reportWindowIfChanged() {
+        guard lastReportedWindow !== window else { return }
+        lastReportedWindow = window
+        onWindowChanged?(window)
+    }
+}
+
 struct ContentView: View {
+    @AppStorage("FarmHarvest.windowPinned") private var isPinned = false
     @State private var records: [CropRecord] = CropStore.load()
     // 必须缓存成 @State：CropStore.presets 是计算属性，改动文件后 SwiftUI 不会
     // 自行感知，弹窗关闭时需主动刷新，否则主界面模板列表不会同步。
@@ -258,12 +292,25 @@ struct ContentView: View {
     /// 左侧录入面板是否收起。收起后记录区独占宽度，适合记录多时查看。
     @State private var inputCollapsed: Bool = false
     @State private var isShowingMinimumWindowSize: Bool = false
+    @State private var isWindowFocused = true
+    @State private var appWindow: NSWindow?
+    @State private var originalWindowLevel: NSWindow.Level?
+    @State private var originalWindowCollectionBehavior: NSWindow.CollectionBehavior?
+    @State private var originalWindowAlphaValue: CGFloat?
     private let compactRecordsBreakpoint: CGFloat = 520
     private let compactRecordsHeightBreakpoint: CGFloat = 520
     private let compactWindowMinimumWidth: CGFloat = 260
     private let compactWindowMinimumHeight: CGFloat = 322
     private let recordsOverviewWidth: CGFloat = 527
     private let recordsOverviewHeight: CGFloat = 755
+
+    private var minimumWindowWidth: CGFloat {
+        return inputCollapsed ? compactWindowMinimumWidth : 900
+    }
+
+    private var minimumWindowHeight: CGFloat {
+        compactWindowMinimumHeight
+    }
 
     private var selectedPreset: CropPreset? {
         presets.first { $0.id == selectedPresetID }
@@ -314,8 +361,8 @@ struct ContentView: View {
 
     var body: some View {
         NavigationStack {
+            // 置顶失焦只改变透明度，不切换布局或调整窗口尺寸。
             // 左右分栏：左侧录入、右侧提醒记录，首屏即可看到记录。
-            // 左侧可折叠：记录多的时候收起，把宽度全让给记录区。
             GeometryReader { geometry in
                 let compactRecords = geometry.size.height < compactRecordsHeightBreakpoint
                     || (inputCollapsed && geometry.size.width < compactRecordsBreakpoint)
@@ -337,6 +384,17 @@ struct ContentView: View {
             .navigationTitle("事项提醒")
             .navigationSubtitle("桌面倒计时")
             .background(.clear)
+            .toolbar {
+                ToolbarItem(placement: .primaryAction) {
+                    Button {
+                        isPinned.toggle()
+                    } label: {
+                        Image(systemName: isPinned ? "pin.fill" : "pin")
+                    }
+                    .help(isPinned ? "取消置顶" : "置顶窗口")
+                    .accessibilityLabel(isPinned ? "取消置顶" : "置顶窗口")
+                }
+            }
             .onAppear {
                 records = CropStore.load()
                 // bootstrap 内部会在授权回调里重排通知，
@@ -382,14 +440,52 @@ struct ContentView: View {
         }
         .background {
             WindowMinimumSizeConfigurator(
-                minWidth: inputCollapsed ? compactWindowMinimumWidth : 900,
-                minHeight: compactWindowMinimumHeight
+                minWidth: minimumWindowWidth,
+                minHeight: minimumWindowHeight
             )
             .frame(width: 1, height: 1)
             .hidden()
         }
-        .frame(minWidth: inputCollapsed ? compactWindowMinimumWidth : 900,
-               minHeight: compactWindowMinimumHeight)
+        .background {
+            WindowAccessor { window in
+                guard let window else {
+                    appWindow = nil
+                    originalWindowLevel = nil
+                    originalWindowCollectionBehavior = nil
+                    originalWindowAlphaValue = nil
+                    return
+                }
+                if appWindow !== window {
+                    appWindow = window
+                    originalWindowLevel = window.level
+                    originalWindowCollectionBehavior = window.collectionBehavior
+                    originalWindowAlphaValue = window.alphaValue
+                }
+                applyWindowPinState(to: window, pinned: isPinned)
+                handleWindowFocusChange(window, focused: window.isKeyWindow)
+            }
+                .frame(width: 1, height: 1)
+                .allowsHitTesting(false)
+                .accessibilityHidden(true)
+        }
+        .frame(minWidth: minimumWindowWidth, minHeight: minimumWindowHeight)
+        .onChange(of: isPinned) { _, pinned in
+            guard let appWindow else { return }
+            applyWindowPinState(to: appWindow, pinned: pinned)
+            applyWindowOpacity(to: appWindow)
+        }
+        .onReceive(NotificationCenter.default.publisher(
+            for: NSWindow.didBecomeKeyNotification)) { notification in
+            guard let window = notification.object as? NSWindow,
+                  window === appWindow else { return }
+            handleWindowFocusChange(window, focused: true)
+        }
+        .onReceive(NotificationCenter.default.publisher(
+            for: NSWindow.didResignKeyNotification)) { notification in
+            guard let window = notification.object as? NSWindow,
+                  window === appWindow else { return }
+            handleWindowFocusChange(window, focused: false)
+        }
         .confirmationDialog("清理 \(readyCount) 条已结束记录？",
                             isPresented: $clearReadyConfirm, titleVisibility: .visible) {
             Button("清除", role: .destructive) { clearReadyRecords() }
@@ -418,6 +514,33 @@ struct ContentView: View {
                 diagLines = filtered + lines
             }
         }
+    }
+
+    private func applyWindowPinState(to window: NSWindow, pinned: Bool) {
+        guard let originalWindowLevel,
+              let originalWindowCollectionBehavior else { return }
+        if pinned {
+            window.level = .floating
+            var behavior = originalWindowCollectionBehavior
+            behavior.insert(.canJoinAllSpaces)
+            behavior.insert(.fullScreenAuxiliary)
+            window.collectionBehavior = behavior
+        } else {
+            window.level = originalWindowLevel
+            window.collectionBehavior = originalWindowCollectionBehavior
+        }
+    }
+
+    private func applyWindowOpacity(to window: NSWindow) {
+        let fullOpacity = originalWindowAlphaValue ?? 1
+        window.alphaValue = isPinned && !isWindowFocused
+            ? fullOpacity * 0.78
+            : fullOpacity
+    }
+
+    private func handleWindowFocusChange(_ window: NSWindow, focused: Bool) {
+        isWindowFocused = focused
+        applyWindowOpacity(to: window)
     }
 
     private func formatPreviewText(_ s: String) -> String { s }
