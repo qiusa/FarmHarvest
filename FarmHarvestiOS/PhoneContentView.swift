@@ -796,6 +796,8 @@ private struct PhoneEditRecordSheet: View {
     @State private var pendingCycleDelete: HarvestCycle?
     @State private var cycleAdjustmentHours: [String: String] = [:]
     @State private var cycleAdjustmentMinutes: [String: String] = [:]
+    @State private var expandedCycleAdjustments: Set<String> = []
+    @State private var editedCycleAdjustments: Set<String> = []
 
     private enum NewCycleMode: String, CaseIterable, Identifiable {
         case fromNow = "从现在起"
@@ -840,6 +842,12 @@ private struct PhoneEditRecordSheet: View {
         return previewDate > Date()
     }
 
+    private var hasInvalidEditedCycleAdjustment: Bool {
+        editedCycleAdjustments.contains {
+            cycleAdjustmentDuration(for: $0) == nil
+        }
+    }
+
     private var summary: String {
         let harvestedCount = harvests.filter(\.harvested).count
         let next = harvests
@@ -878,7 +886,21 @@ private struct PhoneEditRecordSheet: View {
                                 selection: $cycle.date,
                                 displayedComponents: [.date, .hourAndMinute]
                             )
-                            DisclosureGroup("从现在起调整") {
+                            Button {
+                                toggleCycleAdjustment(for: cycle.id)
+                            } label: {
+                                HStack {
+                                    Text("从现在起调整")
+                                    Spacer()
+                                    Image(systemName: expandedCycleAdjustments.contains(cycle.id)
+                                          ? "chevron.down" : "chevron.right")
+                                        .font(.caption.weight(.semibold))
+                                }
+                                .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain)
+
+                            if expandedCycleAdjustments.contains(cycle.id) {
                                 HStack(spacing: 8) {
                                     TextField(
                                         "1",
@@ -898,6 +920,40 @@ private struct PhoneEditRecordSheet: View {
                                     .frame(maxWidth: 70)
                                     Text("分钟")
                                         .foregroundStyle(.secondary)
+
+                                    VStack(spacing: 0) {
+                                        Button {
+                                            stepCycleAdjustment(for: cycle.id, by: 1)
+                                        } label: {
+                                            Image(systemName: "chevron.up")
+                                                .font(.system(size: 10, weight: .bold))
+                                                .frame(width: 32, height: 22)
+                                                .contentShape(Rectangle())
+                                        }
+                                        .buttonStyle(.plain)
+                                        .accessibilityLabel("增加一分钟")
+
+                                        Rectangle()
+                                            .fill(Color.primary.opacity(0.12))
+                                            .frame(height: 1)
+                                            .padding(.horizontal, 5)
+
+                                        Button {
+                                            stepCycleAdjustment(for: cycle.id, by: -1)
+                                        } label: {
+                                            Image(systemName: "chevron.down")
+                                                .font(.system(size: 10, weight: .bold))
+                                                .frame(width: 32, height: 22)
+                                                .contentShape(Rectangle())
+                                        }
+                                        .buttonStyle(.plain)
+                                        .disabled(cycleAdjustmentStepperMinutes(for: cycle.id) == 0)
+                                        .accessibilityLabel("减少一分钟")
+                                    }
+                                    .background(
+                                        Color.primary.opacity(0.07),
+                                        in: RoundedRectangle(cornerRadius: 6)
+                                    )
                                 }
 
                                 if let preview = cycleAdjustmentPreview(for: cycle.id) {
@@ -912,6 +968,7 @@ private struct PhoneEditRecordSheet: View {
                                 }
                                 .disabled(cycleAdjustmentDuration(for: cycle.id) == nil)
                             }
+
                             Toggle("已完成", isOn: $cycle.harvested)
                             HStack {
                                 TimelineView(.periodic(from: .now, by: 1)) { context in
@@ -928,10 +985,17 @@ private struct PhoneEditRecordSheet: View {
                                         )
                                 }
                                 Spacer()
-                                Button("删除这一次提醒", role: .destructive) {
+                                Button {
                                     pendingCycleDelete = cycle
+                                } label: {
+                                    Image(systemName: "trash")
+                                        .font(.body)
+                                        .foregroundStyle(.red)
+                                        .frame(width: 44, height: 44)
+                                        .contentShape(Rectangle())
                                 }
-                                .font(.caption)
+                                .buttonStyle(.plain)
+                                .accessibilityLabel("删除这一次提醒")
                             }
                         }
                         .padding(.vertical, 4)
@@ -1003,7 +1067,7 @@ private struct PhoneEditRecordSheet: View {
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("保存", action: save)
-                        .disabled(harvests.isEmpty)
+                        .disabled(harvests.isEmpty || hasInvalidEditedCycleAdjustment)
                 }
             }
             .confirmationDialog(
@@ -1037,25 +1101,59 @@ private struct PhoneEditRecordSheet: View {
     private func cycleAdjustmentHoursBinding(for id: String) -> Binding<String> {
         Binding(
             get: { cycleAdjustmentHours[id] ?? "1" },
-            set: { cycleAdjustmentHours[id] = $0 }
+            set: {
+                cycleAdjustmentHours[id] = $0
+                editedCycleAdjustments.insert(id)
+            }
         )
     }
 
     private func cycleAdjustmentMinutesBinding(for id: String) -> Binding<String> {
         Binding(
             get: { cycleAdjustmentMinutes[id] ?? "0" },
-            set: { cycleAdjustmentMinutes[id] = $0 }
+            set: {
+                cycleAdjustmentMinutes[id] = $0
+                editedCycleAdjustments.insert(id)
+            }
         )
     }
 
     private func cycleAdjustmentDuration(for id: String) -> Int? {
+        guard let total = cycleAdjustmentStepperMinutesIfValid(for: id),
+              total > 0 else { return nil }
+        return total
+    }
+
+    private func cycleAdjustmentStepperMinutesIfValid(for id: String) -> Int? {
         guard let hours = Int((cycleAdjustmentHours[id] ?? "1").trimmingCharacters(in: .whitespaces)),
               let minutes = Int((cycleAdjustmentMinutes[id] ?? "0").trimmingCharacters(in: .whitespaces)),
               hours >= 0, minutes >= 0 else { return nil }
         let (hourMinutes, overflow1) = hours.multipliedReportingOverflow(by: 60)
         let (total, overflow2) = hourMinutes.addingReportingOverflow(minutes)
-        guard !overflow1, !overflow2, total > 0 else { return nil }
+        guard !overflow1, !overflow2 else { return nil }
         return total
+    }
+
+    private func cycleAdjustmentStepperMinutes(for id: String) -> Int {
+        cycleAdjustmentStepperMinutesIfValid(for: id) ?? 0
+    }
+
+    private func toggleCycleAdjustment(for id: String) {
+        if expandedCycleAdjustments.contains(id) {
+            expandedCycleAdjustments.remove(id)
+        } else {
+            expandedCycleAdjustments.insert(id)
+        }
+    }
+
+    private func stepCycleAdjustment(for id: String, by delta: Int) {
+        guard let current = cycleAdjustmentStepperMinutesIfValid(for: id) else { return }
+        let (stepped, overflow) = current.addingReportingOverflow(delta)
+        guard !overflow else { return }
+        let total = max(0, stepped)
+        cycleAdjustmentHours[id] = "\(total / 60)"
+        cycleAdjustmentMinutes[id] = "\(total % 60)"
+        editedCycleAdjustments.insert(id)
     }
 
     private func cycleAdjustmentPreview(for id: String) -> Date? {
@@ -1067,6 +1165,7 @@ private struct PhoneEditRecordSheet: View {
         guard let index = harvests.firstIndex(where: { $0.id == id }),
               let preview = cycleAdjustmentPreview(for: id) else { return }
         harvests[index].date = preview
+        editedCycleAdjustments.remove(id)
         harvests.sort { $0.date < $1.date }
     }
 
@@ -1078,8 +1177,16 @@ private struct PhoneEditRecordSheet: View {
     }
 
     private func save() {
-        guard !harvests.isEmpty else { return }
-        let sorted = harvests.sorted { $0.date < $1.date }
+        guard !harvests.isEmpty, !hasInvalidEditedCycleAdjustment else { return }
+        var harvestsToSave = harvests
+        for index in harvestsToSave.indices
+        where editedCycleAdjustments.contains(harvestsToSave[index].id) {
+            guard let preview = cycleAdjustmentPreview(for: harvestsToSave[index].id) else {
+                return
+            }
+            harvestsToSave[index].date = preview
+        }
+        let sorted = harvestsToSave.sorted { $0.date < $1.date }
         let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
         let trimmedNote = note.trimmingCharacters(in: .whitespacesAndNewlines)
         let firstDate = sorted[0].date
