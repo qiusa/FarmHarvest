@@ -1,0 +1,8 @@
+{
+  "modelVersion": "5.0.0",
+  "name": "farmharvest-harmony",
+  "version": "1.0.0",
+  "description": "事项提醒 HarmonyOS 元服务",
+  "dependencies": {},
+  "devDependencies": {}
+}

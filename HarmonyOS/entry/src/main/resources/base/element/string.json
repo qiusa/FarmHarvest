@@ -1,0 +1,12 @@
+{
+  "string": [
+    {
+      "name": "module_desc",
+      "value": "事项提醒元服务"
+    },
+    {
+      "name": "EntryAbility_desc",
+      "value": "事项提醒"
+    }
+  ]
+}

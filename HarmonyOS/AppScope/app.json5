@@ -1,0 +1,12 @@
+{
+  "app": {
+    "bundleName": "com.atomicservice.farmharvest",
+    "vendor": "Yixin Technology",
+    "versionCode": 1,
+    "versionName": "1.0.0",
+    "buildVersion": "1",
+    "icon": "$media:app_icon",
+    "label": "$string:app_name",
+    "bundleType": "atomicService"
+  }
+}

@@ -65,3 +65,10 @@ FarmHarvest-备份-*/
 .vscode/
 .idea/
 *.iml
+
+# ===== HarmonyOS / DevEco Studio =====
+HarmonyOS/oh_modules/
+HarmonyOS/.hvigor/
+HarmonyOS/build/
+HarmonyOS/entry/build/
+HarmonyOS/local.properties

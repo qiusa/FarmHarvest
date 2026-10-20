@@ -1,0 +1,7 @@
+{
+  "name": "entry",
+  "version": "1.0.0",
+  "description": "事项提醒元服务入口模块",
+  "main": "",
+  "dependencies": {}
+}
