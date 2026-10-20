@@ -14,7 +14,7 @@ struct CropManagerSheet: View {
         var id: String { rawValue }
     }
 
-    @State private var tab: Tab = .add
+    @Binding private var tab: Tab
     @State private var presets: [CropPreset] = CropStore.presets
     @State private var hidden: [CropPreset] = CropStore.hiddenBuiltinCrops()
     @State private var builtinIDs: Set<String> = Set(CropStore.builtinCrops.map(\.id))
@@ -48,6 +48,11 @@ struct CropManagerSheet: View {
     @State private var showImporter: Bool = false
     /// 导出内容在点击按钮时就地生成，避免在 body 求值时反复读盘
     @State private var exportData: Data = Data()
+
+    init(onAdded: @escaping (CropPreset) -> Void, tab: Binding<Tab>) {
+        self.onAdded = onAdded
+        _tab = tab
+    }
 
     private var formMinutes: Int {
         let h = max(0, Int(hoursText.trimmingCharacters(in: .whitespaces)) ?? 0)

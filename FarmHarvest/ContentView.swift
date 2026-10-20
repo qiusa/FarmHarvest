@@ -286,6 +286,7 @@ struct ContentView: View {
     @State private var saveFailed: Bool = false
     @State private var diagLines: [String] = []
     @State private var diagExpanded: Bool = false
+    @State private var managerTab: CropManagerSheet.Tab = .add
     @State private var clearReadyConfirm: Bool = false
     /// 待确认删除的记录（nil = 未点删除）。删除不可撤销，必须二次确认。
     @State private var pendingDelete: CropRecord? = nil
@@ -385,7 +386,26 @@ struct ContentView: View {
             .navigationSubtitle("桌面倒计时")
             .background(.clear)
             .toolbar {
-                ToolbarItem(placement: .primaryAction) {
+                ToolbarItemGroup(placement: .primaryAction) {
+                    Button {
+                        managerTab = .data
+                        showAddCrop = true
+                    } label: {
+                        Image(systemName: "arrow.up.doc")
+                    }
+                    .help("打开上传备份")
+                    .accessibilityLabel("上传备份")
+
+                    if !inputCollapsed {
+                        Button {
+                            withAnimation(.smooth) { inputCollapsed = true }
+                        } label: {
+                            Image(systemName: "chevron.left")
+                        }
+                        .help("收起左侧面板，记录区占满宽度")
+                        .accessibilityLabel("收起左侧面板")
+                    }
+
                     Button {
                         isPinned.toggle()
                     } label: {
@@ -435,7 +455,7 @@ struct ContentView: View {
                     minutesText = "\(c.minutes % 60)"
                     harvestDate = Date().addingTimeInterval(TimeInterval(c.minutes * 60))
                     showAddCrop = false
-                })
+                }, tab: $managerTab)
             }
         }
         .background {
@@ -609,6 +629,7 @@ struct ContentView: View {
                 // 自定义模板 / 管理 / 导入导出备份。
                 // 展开态这个入口在「选择模板」标题行，收起后不能跟着消失。
                 Button {
+                    managerTab = .add
                     showAddCrop = true
                 } label: {
                     Image(systemName: "slider.horizontal.3")
@@ -656,17 +677,6 @@ struct ContentView: View {
                     .buttonStyle(.bordered)
                     .controlSize(.small)
                     .help("新增自定义模板 / 管理已有模板 / 导入导出备份")
-                    Button {
-                        withAnimation(.smooth) { inputCollapsed = true }
-                    } label: {
-                        Image(systemName: "chevron.left")
-                            .font(.system(size: 11, weight: .semibold))
-                            .frame(width: 22, height: 22)
-                            .background(Color.primary.opacity(0.07),
-                                        in: RoundedRectangle(cornerRadius: 6))
-                    }
-                    .buttonStyle(.plain)
-                    .help("收起左侧面板，记录区占满宽度")
                 }
                 ScrollView(.horizontal, showsIndicators: false) {
                     GlassEffectContainer(spacing: 14) {
