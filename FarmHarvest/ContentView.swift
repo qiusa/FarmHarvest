@@ -19,7 +19,7 @@ func formatDurationText(_ total: Int) -> String {
     return "\(m) 分钟"
 }
 
-/// 本地通知：到期前 1 分钟提醒（主 App 负责调度，Widget 不可发通知）
+/// 本地通知：到期前 2 分钟提醒（主 App 负责调度，Widget 不可发通知）
 /// 本地通知调度。必须是 class：UNUserNotificationCenterDelegate 继承自 NSObjectProtocol，
 /// enum / struct 无法遵循（报 "non-class type cannot conform to class protocol"）。
 final class CropNotifier: NSObject, UNUserNotificationCenterDelegate {
@@ -28,7 +28,7 @@ final class CropNotifier: NSObject, UNUserNotificationCenterDelegate {
     /// App 启动时申请一次通知授权，并把自己注册为代理。
     /// 代理是必须的：不设 willPresent 的话，App 在前台时通知**不弹横幅**，
     /// 看起来就像「没发通知」——其实系统已经收到了。
-    static func bootstrap() {
+    static func bootstrap(onAuthorizationResolved: @escaping () -> Void = {}) {
         let center = UNUserNotificationCenter.current()
         center.delegate = shared
         center.requestAuthorization(options: [.alert, .sound, .badge]) { granted, err in
@@ -38,7 +38,22 @@ final class CropNotifier: NSObject, UNUserNotificationCenterDelegate {
             os_log("通知授权结果 %{public}@", log: .default, type: .info, "\(granted)")
             // 授权是异步的，必须等结果回来再排程；
             // 否则授权尚未完成时的 add() 会被丢弃。
-            DispatchQueue.main.async { reschedule(CropStore.load()) }
+            DispatchQueue.main.async {
+                reschedule(CropStore.load())
+                onAuthorizationResolved()
+            }
+        }
+    }
+
+    /// 检查系统通知权限；除整体授权外，也检查提醒横幅是否被单独关闭。
+    static func hasVisibleNotificationPermission(_ completion: @escaping (Bool) -> Void) {
+        UNUserNotificationCenter.current().getNotificationSettings { settings in
+            let authorizationAllowsNotifications =
+                settings.authorizationStatus == .authorized
+                || settings.authorizationStatus == .provisional
+            let enabled = authorizationAllowsNotifications
+                && settings.alertSetting == .enabled
+            DispatchQueue.main.async { completion(enabled) }
         }
     }
 
@@ -53,7 +68,7 @@ final class CropNotifier: NSObject, UNUserNotificationCenterDelegate {
     }
 
     /// 依据当前记录重排本地通知（每次记录变更都整表重排）。
-    /// 每次提醒排两条：到点提醒 + 提前 1 分钟预告。
+    /// 每次提醒排两条：到点提醒 + 提前 2 分钟预告。
     /// identifier 必须带时间戳+类型区分 —— 否则同一 id 的多条请求会互相覆盖，
     /// 结果只有一条能发出来。
     static func reschedule(_ records: [CropRecord]) {
@@ -83,13 +98,13 @@ final class CropNotifier: NSObject, UNUserNotificationCenterDelegate {
                         badge: 1)
                 }
 
-                // ② 提前 1 分钟预告，留出反应时间
-                let pre = at.addingTimeInterval(-60)
+                // ② 提前 2 分钟预告，留出反应时间
+                let pre = at.addingTimeInterval(-2 * 60)
                 if pre > now {
                     add(center,
                         id: "pre-\(r.id)-\(stamp)",
                         title: "\(r.name) 即将到时间\(nth)",
-                        body: "还有 1 分钟 · 提醒时间 \(fmt(at))",
+                        body: "还有 2 分钟 · 提醒时间 \(fmt(at))",
                         fire: pre,
                         badge: nil)
                 }
@@ -286,6 +301,7 @@ struct ContentView: View {
     @State private var saveFailed: Bool = false
     @State private var diagLines: [String] = []
     @State private var diagExpanded: Bool = false
+    @State private var notificationPermissionEnabled: Bool? = nil
     @State private var managerTab: CropManagerSheet.Tab = .add
     @State private var clearReadyConfirm: Bool = false
     /// 待确认删除的记录（nil = 未点删除）。删除不可撤销，必须二次确认。
@@ -396,14 +412,24 @@ struct ContentView: View {
                     .help("打开上传备份")
                     .accessibilityLabel("上传备份")
 
+                    if notificationPermissionEnabled == false {
+                        Button {
+                            openNotificationSettings()
+                        } label: {
+                            Label("开启通知", systemImage: "bell.slash")
+                        }
+                        .help("通知权限未开启，点击前往系统设置")
+                        .accessibilityLabel("前往系统设置开启通知")
+                    }
+
                     if !inputCollapsed {
                         Button {
-                            withAnimation(.smooth) { inputCollapsed = true }
+                            collapseInputAndMinimizeWindow()
                         } label: {
-                            Image(systemName: "chevron.left")
+                            Image(systemName: "arrow.down.right.and.arrow.up.left")
                         }
-                        .help("收起左侧面板，记录区占满宽度")
-                        .accessibilityLabel("收起左侧面板")
+                        .help("收起左侧面板并将窗口缩到最小")
+                        .accessibilityLabel("收起侧边栏并缩小窗口")
                     }
 
                     Button {
@@ -419,7 +445,10 @@ struct ContentView: View {
                 records = CropStore.load()
                 // bootstrap 内部会在授权回调里重排通知，
                 // 不要在这里再排一次——那会在授权完成前被丢弃
-                CropNotifier.bootstrap()
+                CropNotifier.bootstrap {
+                    refreshNotificationPermission()
+                }
+                refreshNotificationPermission()
                 diagLines = CropStore.diagnoseEnvironment()
                 // 通知自检是异步的，稍后回填到诊断框
                 CropNotifier.diagnose { lines in
@@ -527,6 +556,7 @@ struct ContentView: View {
             for: NSApplication.didBecomeActiveNotification)) { _ in
             // 回到前台时重排：等待期间有些通知已经触发或过期，
             // 不重排会留下失效条目，也会让新编辑的提醒时间漏掉提醒。
+            refreshNotificationPermission()
             records = CropStore.load()
             CropNotifier.reschedule(records)
             CropNotifier.diagnose { lines in
@@ -534,6 +564,35 @@ struct ContentView: View {
                 diagLines = filtered + lines
             }
         }
+    }
+
+    private func refreshNotificationPermission() {
+        CropNotifier.hasVisibleNotificationPermission { enabled in
+            notificationPermissionEnabled = enabled
+        }
+    }
+
+    private func openNotificationSettings() {
+        guard let url = URL(string:
+            "x-apple.systempreferences:com.apple.Notifications-Settings.extension?id=com.yixin.farmharvest"
+        ) else { return }
+        NSWorkspace.shared.open(url)
+    }
+
+    private func collapseInputAndMinimizeWindow() {
+        withAnimation(.smooth) { inputCollapsed = true }
+        isShowingMinimumWindowSize = true
+
+        guard let window = NSApp.keyWindow ?? NSApp.mainWindow ?? NSApp.windows.first else {
+            return
+        }
+        let minimumSize = NSSize(width: compactWindowMinimumWidth,
+                                 height: compactWindowMinimumHeight)
+        // 先同步放宽原生窗口的宽度限制，再缩窗，避免旧的展开态最小宽度阻止调整。
+        window.minSize = minimumSize
+        var frame = window.frame
+        frame.size = minimumSize
+        window.setFrame(frame, display: true, animate: true)
     }
 
     private func applyWindowPinState(to window: NSWindow, pinned: Bool) {

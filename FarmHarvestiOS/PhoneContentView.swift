@@ -1258,13 +1258,13 @@ private final class PhoneCropNotifier: NSObject, UNUserNotificationCenterDelegat
                     )
                 }
 
-                let reminder = cycle.date.addingTimeInterval(-60)
+                let reminder = cycle.date.addingTimeInterval(-2 * 60)
                 if reminder > now {
                     add(
                         center,
                         id: "phone-pre-\(record.id)-\(timestamp)",
                         title: "\(record.name) 即将到时间\(suffix)",
-                        body: "还有 1 分钟 · 提醒时间 \(fmt(cycle.date))",
+                        body: "还有 2 分钟 · 提醒时间 \(fmt(cycle.date))",
                         date: reminder
                     )
                 }
