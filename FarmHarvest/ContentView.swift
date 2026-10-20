@@ -1119,7 +1119,7 @@ struct RecordRow: View {
                                 .foregroundStyle(.tertiary)
                         } else {
                             ForEach(r.harvests) { cycle in
-                                compactTimeBadge(cycle)
+                                compactTimeLine(cycle)
                             }
                         }
                     }
@@ -1229,17 +1229,66 @@ struct RecordRow: View {
         return timeTint(for: highest)
     }
 
-    /// 紧凑模式没有倒计时文字，仍按 30 秒节拍刷新时间徽标的等级。
+    /// 紧凑模式也显示倒计时；与提醒时间放在同一行以适配最小窗口。
     @ViewBuilder
-    private func compactTimeBadge(_ c: HarvestCycle) -> some View {
+    private func compactTimeLine(_ c: HarvestCycle) -> some View {
         if c.harvested {
-            timeBadge(c, urgency: .normal, completed: true)
+            timeBadge(c, urgency: .normal, completed: true, compact: true)
         } else {
-            TimelineView(.periodic(from: .now, by: 30)) { context in
-                timeBadge(c, urgency: ReminderUrgency(
+            TimelineView(.periodic(from: .now, by: 1)) { context in
+                let urgency = ReminderUrgency(
                     remaining: c.date.timeIntervalSince(context.date)
-                ))
+                )
+                HStack(spacing: 4) {
+                    timeBadge(c, urgency: urgency, compact: true)
+                    compactCountdownLabel(c, urgency: urgency, now: context.date)
+                }
+                .accessibilityElement(children: .combine)
+                .accessibilityLabel(accessibilityText(c, now: context.date))
             }
+        }
+    }
+
+    @ViewBuilder
+    private func compactCountdownLabel(
+        _ c: HarvestCycle,
+        urgency: ReminderUrgency,
+        now: Date
+    ) -> some View {
+        switch urgency {
+        case .normal:
+            Text(remainText(c.date, now: now))
+                .font(.system(size: 10, weight: .medium, design: .rounded))
+                .monospacedDigit()
+                .foregroundStyle(.secondary)
+        case .thirtyMinutes:
+            Text(remainText(c.date, now: now))
+                .font(.system(size: 10, weight: .semibold, design: .rounded))
+                .monospacedDigit()
+                .foregroundStyle(timeTint(for: urgency))
+        case .twentyMinutes:
+            Text(remainText(c.date, now: now))
+                .font(.system(size: 10, weight: .bold, design: .rounded))
+                .monospacedDigit()
+                .foregroundStyle(.white)
+                .padding(.horizontal, 4)
+                .padding(.vertical, 1)
+                .background(Color.orange, in: RoundedRectangle(cornerRadius: 5))
+        case .tenMinutes:
+            Text(remainText(c.date, now: now))
+                .font(.system(size: 10, weight: .heavy, design: .rounded))
+                .monospacedDigit()
+                .foregroundStyle(.white)
+                .padding(.horizontal, 4)
+                .padding(.vertical, 1)
+                .background(Color.red, in: RoundedRectangle(cornerRadius: 5))
+        case .overdue:
+            Text("已到期")
+                .font(.system(size: 10, weight: .bold, design: .rounded))
+                .foregroundStyle(.white)
+                .padding(.horizontal, 4)
+                .padding(.vertical, 1)
+                .background(Color.orange, in: Capsule())
         }
     }
 
@@ -1273,17 +1322,20 @@ struct RecordRow: View {
     private func timeBadge(
         _ c: HarvestCycle,
         urgency: ReminderUrgency,
-        completed: Bool = false
+        completed: Bool = false,
+        compact: Bool = false
     ) -> some View {
         let critical = urgency == .tenMinutes
         return Text(fmt(c.date))
-            .font(.callout.weight(critical ? .bold : .semibold))
+            .font(compact
+                  ? .system(size: 11, weight: critical ? .bold : .semibold)
+                  : .callout.weight(critical ? .bold : .semibold))
             .monospacedDigit()
             .foregroundStyle(completed ? Color.secondary : (critical ? .red : timeTint(for: urgency)))
             .lineLimit(1)
             .minimumScaleFactor(0.8)
             .layoutPriority(1)
-            .padding(.horizontal, 7)
+            .padding(.horizontal, compact ? 5 : 7)
             .padding(.vertical, 2)
             .background(
                 completed ? Color.green.opacity(0.10) : timeFill(for: urgency),
