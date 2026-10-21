@@ -38,6 +38,8 @@ Package.resolved
 DerivedData/
 build/
 Build/
+android/.gradle/
+android/local.properties
 *.app
 *.appex
 # 签名相关
