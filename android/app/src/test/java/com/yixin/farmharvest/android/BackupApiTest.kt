@@ -23,4 +23,37 @@ class BackupApiTest {
         assertFalse(BackupApi.isAllowedRemoteUrl("http://192.168.200.94:10023/other/file.json"))
         assertFalse(BackupApi.isAllowedRemoteUrl("http://user@192.168.200.94:10023/source/a.json"))
     }
+
+    @Test
+    fun backupChannelsUseTheExpectedSharedAddresses() {
+        assertTrue(BackupChannel.LAN.backupUrl == FarmStore.SOURCE_BACKUP_URL)
+        assertTrue(
+            BackupChannel.PUBLIC.backupUrl ==
+                "https://testweb.yxgames.fun/buildManage/api/upload/FarmHarvest.json",
+        )
+    }
+
+    @Test
+    fun validatesThePublicUploadResponseDownloadAddress() {
+        assertTrue(
+            BackupApi.isAllowedBuildManagerDownloadUrl(
+                "https://testweb.yxgames.fun/buildManage/api/upload/FarmHarvest.json",
+            ),
+        )
+        assertFalse(
+            BackupApi.isAllowedBuildManagerDownloadUrl(
+                "https://evil.example/buildManage/api/upload/FarmHarvest.json",
+            ),
+        )
+        assertFalse(
+            BackupApi.isAllowedBuildManagerDownloadUrl(
+                "https://testweb.yxgames.fun/buildManage/api/upload/another.json",
+            ),
+        )
+        assertFalse(
+            BackupApi.isAllowedBuildManagerDownloadUrl(
+                "http://testweb.yxgames.fun/buildManage/api/upload/FarmHarvest.json",
+            ),
+        )
+    }
 }

@@ -3,6 +3,8 @@ package com.yixin.farmharvest.android
 import android.app.AlarmManager
 import android.app.DatePickerDialog
 import android.app.TimePickerDialog
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.Intent
 import android.net.Uri
 import android.os.Build
@@ -86,6 +88,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.text.SimpleDateFormat
+import java.io.ByteArrayOutputStream
 import java.util.Calendar
 import java.util.Date
 import java.util.Locale
@@ -97,6 +100,7 @@ class MainActivity : ComponentActivity() {
     internal var minutesText by mutableStateOf("30")
     internal var noteText by mutableStateOf("")
     internal var lastUploadTimestamp by mutableLongStateOf(0L)
+    internal var lastPublicUploadTimestamp by mutableLongStateOf(0L)
     private var hasLoadedOnce = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -127,7 +131,8 @@ class MainActivity : ComponentActivity() {
             selectedPresetId = presets.first().id
             minutesText = presets.first().minutes.toString()
         }
-        lastUploadTimestamp = FarmStore.lastUploadTimestamp(this)
+        lastUploadTimestamp = FarmStore.lastUploadTimestamp(this, BackupChannel.LAN)
+        lastPublicUploadTimestamp = FarmStore.lastUploadTimestamp(this, BackupChannel.PUBLIC)
         ReminderScheduler.reschedule(this, loadedRecords)
         hasLoadedOnce = true
     }
@@ -170,7 +175,10 @@ private fun FarmHarvestApp(activity: MainActivity) {
     var deletingRecord by remember { mutableStateOf<CropRecord?>(null) }
     var showClearConfirmation by remember { mutableStateOf(false) }
     var showReplaceConfirmation by remember { mutableStateOf(false) }
+    var pendingRemoteReplace by remember { mutableStateOf(false) }
+    var pendingLocalReplaceUri by remember { mutableStateOf<Uri?>(null) }
     var importMode by remember { mutableStateOf(ImportMode.MERGE) }
+    var backupChannel by rememberSaveable { mutableStateOf(BackupChannel.LAN) }
     var isImporting by remember { mutableStateOf(false) }
     var isUploading by remember { mutableStateOf(false) }
 
@@ -200,13 +208,13 @@ private fun FarmHarvestApp(activity: MainActivity) {
         scope.launch { snackbar.showSnackbar(text) }
     }
 
-    fun startImport(mode: ImportMode) {
+    fun startImport(mode: ImportMode, backupUrl: String) {
         scope.launch {
             isImporting = true
             val before = activity.records.toList()
             try {
                 val summary = withContext(Dispatchers.IO) {
-                    val bytes = BackupApi.downloadBackup(FarmStore.SOURCE_BACKUP_URL)
+                    val bytes = BackupApi.downloadBackup(backupUrl)
                     FarmStore.importBackup(activity, bytes, mode)
                 }
                 activity.reload()
@@ -226,25 +234,88 @@ private fun FarmHarvestApp(activity: MainActivity) {
         }
     }
 
-    fun startUpload() {
+    fun startLocalImport(uri: Uri, mode: ImportMode) {
+        scope.launch {
+            isImporting = true
+            try {
+                val summary = withContext(Dispatchers.IO) {
+                    val bytes = activity.contentResolver.openInputStream(uri)?.use { input ->
+                        val output = ByteArrayOutputStream()
+                        val buffer = ByteArray(8192)
+                        var total = 0
+                        while (true) {
+                            val count = input.read(buffer)
+                            if (count < 0) break
+                            total += count
+                            require(total <= 10 * 1024 * 1024) {
+                                "备份文件超过 10 MB，已取消导入。"
+                            }
+                            output.write(buffer, 0, count)
+                        }
+                        output.toByteArray()
+                    } ?: error("无法读取所选备份文件。")
+                    FarmStore.importBackup(activity, bytes, mode)
+                }
+                activity.reload()
+                message(summary.text)
+            } catch (error: Exception) {
+                message("本地导入失败：${error.message ?: "无法读取备份文件"}")
+            } finally {
+                isImporting = false
+            }
+        }
+    }
+
+    val openBackupLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocument(),
+    ) { uri ->
+        if (uri != null) {
+            if (importMode == ImportMode.REPLACE) {
+                pendingLocalReplaceUri = uri
+                pendingRemoteReplace = false
+                showReplaceConfirmation = true
+            } else {
+                startLocalImport(uri, ImportMode.MERGE)
+            }
+        }
+    }
+
+    val createBackupLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument("application/json"),
+    ) { uri ->
+        if (uri != null) {
+            scope.launch {
+                try {
+                    withContext(Dispatchers.IO) {
+                        val bytes = FarmStore.exportBackup(activity)
+                        activity.contentResolver.openOutputStream(uri)?.use { output ->
+                            output.write(bytes)
+                        } ?: error("无法写入所选位置。")
+                    }
+                    message("备份已导出。")
+                } catch (error: Exception) {
+                    message("导出失败：${error.message ?: "无法写入文件"}")
+                }
+            }
+        }
+    }
+
+    fun startUpload(channel: BackupChannel) {
         scope.launch {
             isUploading = true
             try {
                 val result = withContext(Dispatchers.IO) {
-                    BackupApi.uploadBackup(FarmStore.exportBackup(activity))
+                    BackupApi.uploadBackup(FarmStore.exportBackup(activity), channel)
                 }
                 val timestamp = System.currentTimeMillis()
-                FarmStore.setLastUploadTimestamp(activity, timestamp)
-                activity.lastUploadTimestamp = timestamp
-                message(
-                    if (result.fileName == FarmStore.SOURCE_BACKUP_FILE_NAME) {
-                        "上传成功：${result.fileName}，可从固定地址导入。"
-                    } else {
-                        "上传成功，但服务器因同名自动保存为 ${result.fileName}；固定地址仍指向旧文件。接口不支持覆盖，请联系管理员提供固定文件更新方式。"
-                    },
-                )
+                FarmStore.setLastUploadTimestamp(activity, channel, timestamp)
+                when (channel) {
+                    BackupChannel.LAN -> activity.lastUploadTimestamp = timestamp
+                    BackupChannel.PUBLIC -> activity.lastPublicUploadTimestamp = timestamp
+                }
+                message("已上传到${channel.label}：${result.fileName}，可从备份地址导入最新内容。")
             } catch (error: Exception) {
-                message("上传失败：${error.message ?: "请检查网络后重试"}")
+                message("${channel.label}上传失败：${error.message ?: "请检查网络后重试"}")
             } finally {
                 isUploading = false
             }
@@ -330,18 +401,31 @@ private fun FarmHarvestApp(activity: MainActivity) {
             )
             else -> DataScreen(
                 activity = activity,
+                backupChannel = backupChannel,
+                onBackupChannelChange = { backupChannel = it },
                 importMode = importMode,
                 onImportModeChange = { importMode = it },
                 isImporting = isImporting,
                 isUploading = isUploading,
                 modifier = Modifier.padding(insets),
-                onUpload = ::startUpload,
-                onImport = {
+                onUpload = { startUpload(backupChannel) },
+                onRemoteImport = {
                     if (importMode == ImportMode.REPLACE) {
+                        pendingLocalReplaceUri = null
+                        pendingRemoteReplace = true
                         showReplaceConfirmation = true
                     } else {
-                        startImport(ImportMode.MERGE)
+                        startImport(ImportMode.MERGE, backupChannel.backupUrl)
                     }
+                },
+                onLocalImport = { openBackupLauncher.launch(arrayOf("application/json", "text/json")) },
+                onLocalExport = { createBackupLauncher.launch(FarmStore.SOURCE_BACKUP_FILE_NAME) },
+                onCopyAddress = {
+                    val clipboard = activity.getSystemService(ClipboardManager::class.java)
+                    clipboard?.setPrimaryClip(
+                        ClipData.newPlainText("FarmHarvest backup URL", backupChannel.backupUrl),
+                    )
+                    message("已复制备份地址，可发给另一台设备导入。")
                 },
             )
         }
@@ -424,18 +508,32 @@ private fun FarmHarvestApp(activity: MainActivity) {
 
     if (showReplaceConfirmation) {
         AlertDialog(
-            onDismissRequest = { showReplaceConfirmation = false },
-            title = { Text("用远程备份替换本机数据？") },
-            text = { Text("当前提醒记录、自定义模板和内置模板隐藏状态将被远程备份覆盖。") },
+            onDismissRequest = {
+                showReplaceConfirmation = false
+                pendingRemoteReplace = false
+                pendingLocalReplaceUri = null
+            },
+            title = { Text("用备份替换本机数据？") },
+            text = { Text("当前提醒记录、自定义模板和内置模板隐藏状态将被备份覆盖。") },
             confirmButton = {
                 TextButton(onClick = {
                     showReplaceConfirmation = false
-                    startImport(ImportMode.REPLACE)
-                }) { Text("下载并替换", color = MaterialTheme.colorScheme.error) }
+                    val localUri = pendingLocalReplaceUri
+                    val isRemote = pendingRemoteReplace
+                    pendingLocalReplaceUri = null
+                    pendingRemoteReplace = false
+                    if (isRemote) {
+                        startImport(ImportMode.REPLACE, backupChannel.backupUrl)
+                    } else if (localUri != null) {
+                        startLocalImport(localUri, ImportMode.REPLACE)
+                    }
+                }) { Text("确认替换", color = MaterialTheme.colorScheme.error) }
             },
-            dismissButton = {
-                TextButton(onClick = { showReplaceConfirmation = false }) { Text("取消") }
-            },
+            dismissButton = { TextButton(onClick = {
+                showReplaceConfirmation = false
+                pendingRemoteReplace = false
+                pendingLocalReplaceUri = null
+            }) { Text("取消") } },
         )
     }
 }
@@ -758,13 +856,18 @@ private fun RecordCard(
 @Composable
 private fun DataScreen(
     activity: MainActivity,
+    backupChannel: BackupChannel,
+    onBackupChannelChange: (BackupChannel) -> Unit,
     importMode: ImportMode,
     onImportModeChange: (ImportMode) -> Unit,
     isImporting: Boolean,
     isUploading: Boolean,
     modifier: Modifier = Modifier,
     onUpload: () -> Unit,
-    onImport: () -> Unit,
+    onRemoteImport: () -> Unit,
+    onLocalImport: () -> Unit,
+    onLocalExport: () -> Unit,
+    onCopyAddress: () -> Unit,
 ) {
     val context = LocalContext.current
     Column(
@@ -827,14 +930,32 @@ private fun DataScreen(
                 Modifier.fillMaxWidth().padding(16.dp),
                 verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
-                SectionHeading("上传备份到共享目录")
+                SectionHeading("同步通道")
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    BackupChannel.entries.forEach { channel ->
+                        FilterChip(
+                            selected = backupChannel == channel,
+                            onClick = { onBackupChannelChange(channel) },
+                            label = { Text(channel.label) },
+                        )
+                    }
+                }
+                Text(backupChannel.description, color = Color.Gray, style = MaterialTheme.typography.bodySmall)
+
+                SectionHeading("备份地址")
                 Text(
-                    "上传文件名：${FarmStore.SOURCE_BACKUP_FILE_NAME}。固定导入地址：${FarmStore.SOURCE_BACKUP_URL}。请仅在可信局域网内使用。",
-                    color = Color.Gray,
+                    backupChannel.backupUrl,
+                    color = Color(0xFF4F5D50),
                     style = MaterialTheme.typography.bodySmall,
                 )
+                OutlinedButton(onClick = onCopyAddress, modifier = Modifier.fillMaxWidth()) {
+                    Text("复制备份地址")
+                }
+
+                HorizontalDivider(color = Color(0xFFF0F0F0))
+                SectionHeading("上传")
                 Text(
-                    "接口不覆盖已有文件；若同名文件存在，服务器会追加序号，固定地址仍指向原文件。",
+                    "上传本机当前数据并更新所选通道的备份。手机上的修改不会自动同步。",
                     color = Color.Gray,
                     style = MaterialTheme.typography.bodySmall,
                 )
@@ -851,40 +972,15 @@ private fun DataScreen(
                         Text("↑  上传当前备份")
                     }
                 }
-                val uploadTime = if (activity.lastUploadTimestamp > 0) {
-                    formatUploadTime(activity.lastUploadTimestamp)
-                } else {
-                    "暂无"
+                val uploadTimestamp = when (backupChannel) {
+                    BackupChannel.LAN -> activity.lastUploadTimestamp
+                    BackupChannel.PUBLIC -> activity.lastPublicUploadTimestamp
                 }
+                val uploadTime = if (uploadTimestamp > 0) formatUploadTime(uploadTimestamp) else "尚未上传"
                 Text("最近上传：$uploadTime", color = Color.Gray, style = MaterialTheme.typography.bodySmall)
-            }
-        }
 
-        Card(colors = CardDefaults.cardColors(containerColor = Color.White)) {
-            Column(
-                Modifier.fillMaxWidth().padding(16.dp),
-                verticalArrangement = Arrangement.spacedBy(9.dp),
-            ) {
-                SectionHeading("远程备份地址")
-                Text(
-                    FarmStore.SOURCE_BACKUP_URL,
-                    color = Color(0xFF4F5D50),
-                    style = MaterialTheme.typography.bodySmall,
-                )
-                Text(
-                    "手机和电脑都可从共享目录下载地址或 HTTPS 地址导入。",
-                    color = Color.Gray,
-                    style = MaterialTheme.typography.bodySmall,
-                )
-            }
-        }
-
-        Card(colors = CardDefaults.cardColors(containerColor = Color.White)) {
-            Column(
-                Modifier.fillMaxWidth().padding(16.dp),
-                verticalArrangement = Arrangement.spacedBy(10.dp),
-            ) {
-                SectionHeading("导入方式")
+                HorizontalDivider(color = Color(0xFFF0F0F0))
+                SectionHeading("下载并导入")
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     FilterChip(
                         selected = importMode == ImportMode.MERGE,
@@ -899,15 +995,15 @@ private fun DataScreen(
                 }
                 Text(
                     if (importMode == ImportMode.MERGE) {
-                        "同 ID 的记录和模板会更新，本机没有的项目会追加；本机独有项目保留。"
+                        "同 ID 的记录和模板会更新，本机独有项目保留。"
                     } else {
-                        "完全采用远程备份，会覆盖本机记录、自定义模板和隐藏的内置模板。"
+                        "替换会覆盖本机记录、自定义模板和内置模板隐藏状态。"
                     },
-                    color = Color.Gray,
+                    color = if (importMode == ImportMode.REPLACE) Color(0xFFB26A00) else Color.Gray,
                     style = MaterialTheme.typography.bodySmall,
                 )
                 Button(
-                    onClick = onImport,
+                    onClick = onRemoteImport,
                     enabled = !isImporting,
                     modifier = Modifier.fillMaxWidth(),
                 ) {
@@ -916,19 +1012,29 @@ private fun DataScreen(
                         Spacer(Modifier.width(8.dp))
                         Text("正在下载并导入…")
                     } else {
-                        Text("↓  获取并导入")
+                        Text("↓  下载并导入")
                     }
                 }
-            }
-        }
+                Text(backupChannel.reachabilityHint, color = Color.Gray, style = MaterialTheme.typography.bodySmall)
 
-        Card(colors = CardDefaults.cardColors(containerColor = Color.White)) {
-            Text(
-                "上传会将当前备份保存为一个新文件，不会覆盖已有文件；手机上的修改不会自动同步。",
-                Modifier.fillMaxWidth().padding(16.dp),
-                color = Color.Gray,
-                style = MaterialTheme.typography.bodySmall,
-            )
+                HorizontalDivider(color = Color(0xFFF0F0F0))
+                SectionHeading("本地文件")
+                Text(
+                    "导出 JSON 文件归档，或从已有备份文件导入；导入方式沿用上方的合并/替换设置。",
+                    color = Color.Gray,
+                    style = MaterialTheme.typography.bodySmall,
+                )
+                OutlinedButton(onClick = onLocalExport, modifier = Modifier.fillMaxWidth()) {
+                    Text("导出备份到文件…")
+                }
+                OutlinedButton(
+                    onClick = onLocalImport,
+                    enabled = !isImporting,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text("从文件导入备份…")
+                }
+            }
         }
         Spacer(Modifier.height(8.dp))
     }

@@ -63,6 +63,8 @@ enum class ImportMode { MERGE, REPLACE }
 object FarmStore {
     const val SOURCE_BACKUP_FILE_NAME = "FarmHarvest.json"
     const val SOURCE_BACKUP_URL = "http://192.168.200.94:10023/source/FarmHarvest.json"
+    const val BUILD_MANAGER_BACKUP_URL =
+        "https://testweb.yxgames.fun/buildManage/api/upload/FarmHarvest.json"
     const val UPLOAD_ENDPOINT = "http://192.168.200.94:3211/api/source-files"
     const val UPLOAD_TOKEN = "93c294dc9066ad5fce4e35ad4dc008a7a87feef0465d8af7"
     private const val PREFS = "farm-harvest"
@@ -70,6 +72,8 @@ object FarmStore {
     private const val CROPS_KEY = "custom-crops"
     private const val HIDDEN_KEY = "hidden-builtins"
     private const val LAST_UPLOAD_KEY = "last-upload"
+    private const val LAST_LAN_UPLOAD_KEY = "last-upload-lan"
+    private const val LAST_PUBLIC_UPLOAD_KEY = "last-upload-public"
     private const val NOTIFICATION_PERMISSION_ASKED_KEY = "notification-permission-asked"
 
     private val builtins = listOf(
@@ -253,11 +257,26 @@ object FarmStore {
         )
     }
 
-    fun lastUploadTimestamp(context: Context): Long =
-        prefs(context).getLong(LAST_UPLOAD_KEY, 0L)
+    fun lastUploadTimestamp(context: Context, channel: BackupChannel): Long {
+        val preferences = prefs(context)
+        return when (channel) {
+            BackupChannel.LAN -> preferences.getLong(
+                LAST_LAN_UPLOAD_KEY,
+                preferences.getLong(LAST_UPLOAD_KEY, 0L),
+            )
+            BackupChannel.PUBLIC -> preferences.getLong(LAST_PUBLIC_UPLOAD_KEY, 0L)
+        }
+    }
 
-    fun setLastUploadTimestamp(context: Context, timestamp: Long) {
-        prefs(context).edit().putLong(LAST_UPLOAD_KEY, timestamp).apply()
+    fun setLastUploadTimestamp(context: Context, channel: BackupChannel, timestamp: Long) {
+        val editor = prefs(context).edit()
+        when (channel) {
+            BackupChannel.LAN -> editor
+                .putLong(LAST_LAN_UPLOAD_KEY, timestamp)
+                .putLong(LAST_UPLOAD_KEY, timestamp)
+            BackupChannel.PUBLIC -> editor.putLong(LAST_PUBLIC_UPLOAD_KEY, timestamp)
+        }
+        editor.apply()
     }
 
     fun wasNotificationPermissionAsked(context: Context): Boolean =
