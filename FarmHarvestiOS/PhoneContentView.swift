@@ -20,8 +20,12 @@ struct PhoneContentView: View {
     @State private var remoteImportMode: CropStore.ImportMode = .merge
     @State private var isImportingRemoteBackup = false
     @State private var isUploadingBackup = false
+    @State private var isUploadingBuildManagerBackup = false
+    @State private var buildManagerUploadToken = BuildManagerUploadCredentialStore.load() ?? ""
     @AppStorage(CropStore.lastSuccessfulUploadTimestampKey)
     private var lastSuccessfulUploadTimestamp: Double = 0
+    @AppStorage(CropStore.lastSuccessfulBuildManagerUploadTimestampKey)
+    private var lastSuccessfulBuildManagerUploadTimestamp: Double = 0
     @State private var showRemoteReplaceConfirmation = false
     @State private var pendingRemoteImportURL: URL?
     @State private var message: String?
@@ -411,6 +415,42 @@ struct PhoneContentView: View {
                     .foregroundStyle(.secondary)
             }
 
+            Section("上传到构建管理服务器") {
+                Text(BuildManagerBackupUploader.endpointString)
+                    .font(.footnote.monospaced())
+                    .textSelection(.enabled)
+
+                Text("服务器会为每次上传生成独立下载地址，不覆盖旧备份。令牌由管理员提供并保存在系统钥匙串中；若服务返回 503，需先由管理员配置服务端上传令牌。")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+
+                SecureField("服务器上传令牌", text: $buildManagerUploadToken)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                    .disabled(isUploadingBuildManagerBackup)
+
+                Button {
+                    Task { await uploadBackupToBuildManager() }
+                } label: {
+                    HStack {
+                        Spacer()
+                        if isUploadingBuildManagerBackup {
+                            ProgressView("正在上传备份…")
+                        } else {
+                            Label("上传当前备份到服务器", systemImage: "arrow.up.doc")
+                        }
+                        Spacer()
+                    }
+                }
+                .disabled(isUploadingBuildManagerBackup || buildManagerUploadToken.isEmpty)
+
+                Text(lastSuccessfulBuildManagerUploadTimestamp > 0
+                     ? "最近上传：\(Date(timeIntervalSince1970: lastSuccessfulBuildManagerUploadTimestamp).formatted(date: .numeric, time: .shortened))"
+                     : "最近上传：暂无")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
+
             Section("远程备份地址") {
                 Text(CropStore.defaultRemoteBackupURLString)
                     .font(.footnote.monospaced())
@@ -517,6 +557,30 @@ struct PhoneContentView: View {
             }
         } catch {
             message = "上传失败：\(error.localizedDescription)"
+        }
+    }
+
+    @MainActor
+    private func uploadBackupToBuildManager() async {
+        guard !buildManagerUploadToken.isEmpty else {
+            message = "请先输入管理员提供的服务器上传令牌。"
+            return
+        }
+
+        isUploadingBuildManagerBackup = true
+        defer { isUploadingBuildManagerBackup = false }
+
+        do {
+            let data = try CropStore.exportBackupJSON()
+            try BuildManagerUploadCredentialStore.save(buildManagerUploadToken)
+            let result = try await BuildManagerBackupUploader.uploadBackup(
+                data: data,
+                token: buildManagerUploadToken
+            )
+            lastSuccessfulBuildManagerUploadTimestamp = Date().timeIntervalSince1970
+            message = "已上传：\(result.fileName)\n下载地址：\(result.downloadURL.absoluteString)"
+        } catch {
+            message = "服务器备份上传失败：\(error.localizedDescription)"
         }
     }
 

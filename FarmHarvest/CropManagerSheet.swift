@@ -37,8 +37,12 @@ struct CropManagerSheet: View {
     @State private var importMode: CropStore.ImportMode = .merge
     @State private var isImportingRemoteBackup = false
     @State private var isUploadingBackup = false
+    @State private var isUploadingBuildManagerBackup = false
+    @State private var buildManagerUploadToken = BuildManagerUploadCredentialStore.load() ?? ""
     @AppStorage(CropStore.lastSuccessfulUploadTimestampKey)
     private var lastSuccessfulUploadTimestamp: Double = 0
+    @AppStorage(CropStore.lastSuccessfulBuildManagerUploadTimestampKey)
+    private var lastSuccessfulBuildManagerUploadTimestamp: Double = 0
     @State private var showRemoteReplaceConfirmation = false
     @State private var pendingRemoteImportURL: URL?
 
@@ -386,6 +390,39 @@ struct CropManagerSheet: View {
 
                         Divider()
 
+                        VStack(alignment: .leading, spacing: 10) {
+                            Text("上传到构建管理服务器")
+                                .font(.subheadline).foregroundStyle(.secondary)
+                            Text(BuildManagerBackupUploader.endpointString)
+                                .font(.caption.monospaced())
+                                .textSelection(.enabled)
+                                .fixedSize(horizontal: false, vertical: true)
+                            Text("服务器会为每次上传生成独立下载地址，不覆盖旧备份。令牌由管理员提供并保存在系统钥匙串中；若服务返回 503，需先由管理员配置服务端上传令牌。")
+                                .font(.caption).foregroundStyle(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                            SecureField("服务器上传令牌", text: $buildManagerUploadToken)
+                                .textFieldStyle(.roundedBorder)
+                                .disabled(isUploadingBuildManagerBackup)
+                            Button {
+                                Task { await uploadBackupToBuildManager() }
+                            } label: {
+                                if isUploadingBuildManagerBackup {
+                                    ProgressView("正在上传…")
+                                        .controlSize(.small)
+                                } else {
+                                    Label("上传当前备份到服务器", systemImage: "arrow.up.doc")
+                                }
+                            }
+                            .buttonStyle(.bordered)
+                            .disabled(isUploadingBuildManagerBackup || buildManagerUploadToken.isEmpty)
+                            Text(lastSuccessfulBuildManagerUploadTimestamp > 0
+                                 ? "最近上传：\(Date(timeIntervalSince1970: lastSuccessfulBuildManagerUploadTimestamp).formatted(date: .numeric, time: .shortened))"
+                                 : "最近上传：暂无")
+                                .font(.caption).foregroundStyle(.secondary)
+                        }
+
+                        Divider()
+
                         LabeledField("导出") {
                             Button { startExport() } label: {
                                 Label("导出备份…", systemImage: "square.and.arrow.up")
@@ -582,6 +619,30 @@ struct CropManagerSheet: View {
             }
         } catch {
             show("上传失败：\(error.localizedDescription)", isError: true)
+        }
+    }
+
+    @MainActor
+    private func uploadBackupToBuildManager() async {
+        guard !buildManagerUploadToken.isEmpty else {
+            show("请先输入管理员提供的服务器上传令牌。", isError: true)
+            return
+        }
+
+        isUploadingBuildManagerBackup = true
+        defer { isUploadingBuildManagerBackup = false }
+
+        do {
+            let data = try CropStore.exportBackupJSON()
+            try BuildManagerUploadCredentialStore.save(buildManagerUploadToken)
+            let result = try await BuildManagerBackupUploader.uploadBackup(
+                data: data,
+                token: buildManagerUploadToken
+            )
+            lastSuccessfulBuildManagerUploadTimestamp = Date().timeIntervalSince1970
+            show("已上传：\(result.fileName)\n下载地址：\(result.downloadURL.absoluteString)")
+        } catch {
+            show("服务器备份上传失败：\(error.localizedDescription)", isError: true)
         }
     }
 
