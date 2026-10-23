@@ -186,9 +186,7 @@ struct PhoneContentView: View {
 
             Section("提醒间隔") {
                 HStack {
-                    TextField("分钟", text: $minutesText)
-                        .keyboardType(.numberPad)
-                        .multilineTextAlignment(.trailing)
+                    TimeNumberField(placeholder: "分钟", text: $minutesText)
                     Text("分钟")
                         .foregroundStyle(.secondary)
                 }
@@ -339,9 +337,7 @@ struct PhoneContentView: View {
                 Section("自定义模板") {
                     TextField("名称", text: $newCropName)
                     HStack {
-                        TextField("提醒间隔（分钟）", text: $newCropMinutes)
-                            .keyboardType(.numberPad)
-                            .multilineTextAlignment(.trailing)
+                        TimeNumberField(placeholder: "提醒间隔（分钟）", text: $newCropMinutes)
                         Text("分钟").foregroundStyle(.secondary)
                     }
                 }
@@ -661,6 +657,46 @@ private struct DismissKeyboardOnBackgroundTap: UIViewRepresentable {
     }
 }
 
+private struct TimeNumberField: View {
+    let placeholder: String
+    @Binding var text: String
+    @FocusState private var isFocused: Bool
+
+    var body: some View {
+        TextField(placeholder, text: $text)
+            .keyboardType(.numberPad)
+            .multilineTextAlignment(.trailing)
+            .focused($isFocused)
+            .onChange(of: isFocused) { _, focused in
+                guard focused else { return }
+                // SwiftUI 聚焦时光标停在数字前面，直接输入会把数字插到原有值前面
+                DispatchQueue.main.async { Self.moveCaretToEnd() }
+            }
+    }
+
+    private static func moveCaretToEnd() {
+        for scene in UIApplication.shared.connectedScenes {
+            guard let windowScene = scene as? UIWindowScene else { continue }
+            for window in windowScene.windows {
+                guard let field = window.findFirstResponder() as? UITextField else { continue }
+                let end = field.endOfDocument
+                field.selectedTextRange = field.textRange(from: end, to: end)
+                return
+            }
+        }
+    }
+}
+
+private extension UIView {
+    func findFirstResponder() -> UIView? {
+        if isFirstResponder { return self }
+        for subview in subviews {
+            if let found = subview.findFirstResponder() { return found }
+        }
+        return nil
+    }
+}
+
 private struct PhoneRecordRow: View {
     let record: CropRecord
     let onEdit: () -> Void
@@ -941,21 +977,17 @@ private struct PhoneEditRecordSheet: View {
 
                             if expandedCycleAdjustments.contains(cycle.id) {
                                 HStack(spacing: 8) {
-                                    TextField(
-                                        "1",
+                                    TimeNumberField(
+                                        placeholder: "1",
                                         text: cycleAdjustmentHoursBinding(for: cycle.id)
                                     )
-                                    .keyboardType(.numberPad)
-                                    .multilineTextAlignment(.trailing)
                                     .frame(maxWidth: 70)
                                     Text("小时")
                                         .foregroundStyle(.secondary)
-                                    TextField(
-                                        "0",
+                                    TimeNumberField(
+                                        placeholder: "0",
                                         text: cycleAdjustmentMinutesBinding(for: cycle.id)
                                     )
-                                    .keyboardType(.numberPad)
-                                    .multilineTextAlignment(.trailing)
                                     .frame(maxWidth: 70)
                                     Text("分钟")
                                         .foregroundStyle(.secondary)
@@ -1061,15 +1093,11 @@ private struct PhoneEditRecordSheet: View {
                         )
                     } else {
                         HStack(spacing: 8) {
-                            TextField("1", text: $hoursText)
-                                .keyboardType(.numberPad)
-                                .multilineTextAlignment(.trailing)
+                            TimeNumberField(placeholder: "1", text: $hoursText)
                                 .frame(maxWidth: 70)
                             Text("小时")
                                 .foregroundStyle(.secondary)
-                            TextField("0", text: $minutesText)
-                                .keyboardType(.numberPad)
-                                .multilineTextAlignment(.trailing)
+                            TimeNumberField(placeholder: "0", text: $minutesText)
                                 .frame(maxWidth: 70)
                             Text("分钟")
                                 .foregroundStyle(.secondary)
