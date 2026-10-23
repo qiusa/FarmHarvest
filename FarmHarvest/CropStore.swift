@@ -141,7 +141,6 @@ enum CropStore {
     static let appGroup = "MWYKGVPTJP.com.yixin.farmharvest"
     static let sourceBackupFileName = "FarmHarvest.json"
     static let sourceBackupURLString = "http://192.168.200.94:10023/source/FarmHarvest.json"
-    static let defaultRemoteBackupURLString = sourceBackupURLString
     static let lastSuccessfulUploadTimestampKey = "FarmHarvest.lastSuccessfulUploadTimestamp"
     static let lastSuccessfulBuildManagerUploadTimestampKey = "FarmHarvest.lastSuccessfulBuildManagerUploadTimestamp"
     private static let sourceDownloadHost = "192.168.200.94"

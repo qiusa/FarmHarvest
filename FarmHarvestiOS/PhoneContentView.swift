@@ -20,8 +20,7 @@ struct PhoneContentView: View {
     @State private var remoteImportMode: CropStore.ImportMode = .merge
     @State private var isImportingRemoteBackup = false
     @State private var isUploadingBackup = false
-    @State private var isUploadingBuildManagerBackup = false
-    @State private var buildManagerUploadToken = BuildManagerUploadCredentialStore.load() ?? ""
+    @State private var channel: BackupChannel = .lan
     @AppStorage(CropStore.lastSuccessfulUploadTimestampKey)
     private var lastSuccessfulUploadTimestamp: Double = 0
     @AppStorage(CropStore.lastSuccessfulBuildManagerUploadTimestampKey)
@@ -384,17 +383,35 @@ struct PhoneContentView: View {
 
     private var remoteImportForm: some View {
         Form {
-            Section("上传备份到共享目录") {
-                Text("上传文件名：\(CropStore.sourceBackupFileName)。固定导入地址：\(CropStore.sourceBackupURLString)。请仅在可信局域网内使用。")
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
+            Section("同步通道") {
+                Picker("通道", selection: $channel) {
+                    ForEach(BackupChannel.allCases) { c in
+                        Label(c.rawValue, systemImage: c.icon).tag(c)
+                    }
+                }
+                .pickerStyle(.segmented)
 
-                Text("接口不覆盖已有文件；若同名文件存在，服务器会追加序号，固定地址仍指向原文件。")
+                Text(channel.summary)
                     .font(.footnote)
                     .foregroundStyle(.secondary)
+            }
+
+            Section("备份地址") {
+                Text(channel.backupURLString)
+                    .font(.footnote.monospaced())
+                    .textSelection(.enabled)
 
                 Button {
-                    Task { await uploadCurrentBackup() }
+                    UIPasteboard.general.string = channel.backupURLString
+                    message = "已复制备份地址，可发给另一台设备导入。"
+                } label: {
+                    Label("复制地址", systemImage: "doc.on.doc")
+                }
+            }
+
+            Section("上传") {
+                Button {
+                    Task { await uploadCurrentBackup(to: channel) }
                 } label: {
                     HStack {
                         Spacer()
@@ -408,60 +425,18 @@ struct PhoneContentView: View {
                 }
                 .disabled(isUploadingBackup)
 
-                Text(lastSuccessfulUploadTimestamp > 0
-                     ? "最近上传：\(Date(timeIntervalSince1970: lastSuccessfulUploadTimestamp).formatted(date: .numeric, time: .shortened))"
-                     : "最近上传：暂无")
+                Text(lastUploadText(channel == .lan
+                                    ? lastSuccessfulUploadTimestamp
+                                    : lastSuccessfulBuildManagerUploadTimestamp))
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+
+                Text("上传会用本机数据覆盖备份地址上的那一份，服务器只保留最新一份。")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
             }
 
-            Section("上传到构建管理服务器") {
-                Text(BuildManagerBackupUploader.endpointString)
-                    .font(.footnote.monospaced())
-                    .textSelection(.enabled)
-
-                Text("服务器会为每次上传生成独立下载地址，不覆盖旧备份。令牌由管理员提供并保存在系统钥匙串中；若服务返回 503，需先由管理员配置服务端上传令牌。")
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-
-                SecureField("服务器上传令牌", text: $buildManagerUploadToken)
-                    .textInputAutocapitalization(.never)
-                    .autocorrectionDisabled()
-                    .disabled(isUploadingBuildManagerBackup)
-
-                Button {
-                    Task { await uploadBackupToBuildManager() }
-                } label: {
-                    HStack {
-                        Spacer()
-                        if isUploadingBuildManagerBackup {
-                            ProgressView("正在上传备份…")
-                        } else {
-                            Label("上传当前备份到服务器", systemImage: "arrow.up.doc")
-                        }
-                        Spacer()
-                    }
-                }
-                .disabled(isUploadingBuildManagerBackup || buildManagerUploadToken.isEmpty)
-
-                Text(lastSuccessfulBuildManagerUploadTimestamp > 0
-                     ? "最近上传：\(Date(timeIntervalSince1970: lastSuccessfulBuildManagerUploadTimestamp).formatted(date: .numeric, time: .shortened))"
-                     : "最近上传：暂无")
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-            }
-
-            Section("远程备份地址") {
-                Text(CropStore.defaultRemoteBackupURLString)
-                    .font(.footnote.monospaced())
-                    .textSelection(.enabled)
-
-                Text("手机和电脑都可从共享目录下载地址或 HTTPS 地址导入。")
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-            }
-
-            Section("导入方式") {
+            Section("下载并导入") {
                 Picker("方式", selection: $remoteImportMode) {
                     Text("合并").tag(CropStore.ImportMode.merge)
                     Text("替换").tag(CropStore.ImportMode.replace)
@@ -469,29 +444,33 @@ struct PhoneContentView: View {
                 .pickerStyle(.segmented)
 
                 Text(remoteImportMode == .merge
-                     ? "同 ID 的记录和模板会更新，本机没有的项目会追加；本机独有项目保留。"
+                     ? "同 ID 的记录和模板会更新，本机独有的项目保留。"
                      : "完全采用远程备份，会覆盖本机记录、自定义模板和隐藏的内置模板。")
                     .font(.footnote)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(remoteImportMode == .replace ? Color.orange : Color.secondary)
 
                 Button {
-                    startRemoteImport()
+                    startRemoteImport(from: channel.backupURLString)
                 } label: {
                     HStack {
                         Spacer()
                         if isImportingRemoteBackup {
                             ProgressView("正在下载并导入…")
                         } else {
-                            Label("获取并导入", systemImage: "arrow.down.doc")
+                            Label("下载并导入", systemImage: "arrow.down.doc")
                         }
                         Spacer()
                     }
                 }
                 .disabled(isImportingRemoteBackup)
+
+                Text(channel.reachabilityHint)
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
             }
 
             Section {
-                Text("上传会将当前备份保存为一个新文件，不会覆盖已有文件；手机上的修改不会自动同步。")
+                Text("手机上的修改不会自动同步；两条通道都只保留最新一份备份。")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
             }
@@ -506,10 +485,10 @@ struct PhoneContentView: View {
         }
     }
 
-    private func startRemoteImport() {
-        guard let url = URL(string: CropStore.defaultRemoteBackupURLString),
+    private func startRemoteImport(from urlString: String) {
+        guard let url = URL(string: urlString),
               CropStore.isAllowedRemoteBackupURL(url) else {
-            message = "请输入有效的 HTTPS 地址，或上传接口返回的局域网下载地址。"
+            message = "备份地址无效：\(urlString)"
             return
         }
 
@@ -542,46 +521,33 @@ struct PhoneContentView: View {
     }
 
     @MainActor
-    private func uploadCurrentBackup() async {
+    private func uploadCurrentBackup(to channel: BackupChannel) async {
         isUploadingBackup = true
         defer { isUploadingBackup = false }
 
         do {
             let data = try CropStore.exportBackupJSON()
-            let result = try await SourceFileUploader.uploadBackup(data: data)
-            lastSuccessfulUploadTimestamp = Date().timeIntervalSince1970
-            if result.fileName == CropStore.sourceBackupFileName {
-                message = "上传成功：\(result.fileName)，可从固定地址导入。"
-            } else {
-                message = "上传成功，但服务器因同名自动保存为 \(result.fileName)；固定地址仍指向旧文件。接口不支持覆盖，请联系管理员提供固定文件更新方式。"
+            let fileName: String
+            switch channel {
+            case .lan: fileName = try await SourceFileUploader.uploadBackup(data: data).fileName
+            case .wan: fileName = try await BuildManagerBackupUploader.uploadBackup(data: data).fileName
             }
+            let now = Date().timeIntervalSince1970
+            if channel == .lan {
+                lastSuccessfulUploadTimestamp = now
+            } else {
+                lastSuccessfulBuildManagerUploadTimestamp = now
+            }
+            message = "已上传到\(channel.rawValue)：\(fileName)，备份地址已指向这份最新内容。"
         } catch {
-            message = "上传失败：\(error.localizedDescription)"
+            message = "\(channel.rawValue)上传失败：\(error.localizedDescription)"
         }
     }
 
-    @MainActor
-    private func uploadBackupToBuildManager() async {
-        guard !buildManagerUploadToken.isEmpty else {
-            message = "请先输入管理员提供的服务器上传令牌。"
-            return
-        }
-
-        isUploadingBuildManagerBackup = true
-        defer { isUploadingBuildManagerBackup = false }
-
-        do {
-            let data = try CropStore.exportBackupJSON()
-            try BuildManagerUploadCredentialStore.save(buildManagerUploadToken)
-            let result = try await BuildManagerBackupUploader.uploadBackup(
-                data: data,
-                token: buildManagerUploadToken
-            )
-            lastSuccessfulBuildManagerUploadTimestamp = Date().timeIntervalSince1970
-            message = "已上传：\(result.fileName)\n下载地址：\(result.downloadURL.absoluteString)"
-        } catch {
-            message = "服务器备份上传失败：\(error.localizedDescription)"
-        }
+    private func lastUploadText(_ timestamp: Double) -> String {
+        guard timestamp > 0 else { return "尚未上传" }
+        return "最近上传 " + Date(timeIntervalSince1970: timestamp)
+            .formatted(date: .numeric, time: .shortened)
     }
 
     private func addRecord() {
