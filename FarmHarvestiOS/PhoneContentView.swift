@@ -4,8 +4,13 @@ import UserNotifications
 
 /// iPhone-first interface. The macOS app keeps its existing desktop layout.
 struct PhoneContentView: View {
+    private enum Tab: Hashable {
+        case newRecord, records, data
+    }
+
     @Environment(\.scenePhase) private var scenePhase
 
+    @State private var selectedTab: Tab = .records
     @State private var records = CropStore.load()
     @State private var presets = CropStore.presets
     @State private var selectedPresetID = CropStore.presets.first?.id ?? ""
@@ -20,7 +25,8 @@ struct PhoneContentView: View {
     @State private var remoteImportMode: CropStore.ImportMode = .merge
     @State private var isImportingRemoteBackup = false
     @State private var isUploadingBackup = false
-    @State private var channel: BackupChannel = .lan
+    @State private var channel: BackupChannel = .wan
+    @State private var pendingUploadChannel: BackupChannel?
     @AppStorage(CropStore.lastSuccessfulUploadTimestampKey)
     private var lastSuccessfulUploadTimestamp: Double = 0
     @AppStorage(CropStore.lastSuccessfulBuildManagerUploadTimestampKey)
@@ -40,7 +46,7 @@ struct PhoneContentView: View {
     }
 
     var body: some View {
-        TabView {
+        TabView(selection: $selectedTab) {
             NavigationStack {
                 plantForm
                     .navigationTitle("新建事项")
@@ -58,6 +64,7 @@ struct PhoneContentView: View {
             .tabItem {
                 Label("新建事项", systemImage: "plus.circle")
             }
+            .tag(Tab.newRecord)
 
             NavigationStack {
                 recordsList
@@ -74,6 +81,7 @@ struct PhoneContentView: View {
             .tabItem {
                 Label("记录", systemImage: "list.bullet")
             }
+            .tag(Tab.records)
 
             NavigationStack {
                 remoteImportForm
@@ -82,6 +90,7 @@ struct PhoneContentView: View {
             .tabItem {
                 Label("数据", systemImage: "arrow.down.doc")
             }
+            .tag(Tab.data)
         }
         .tint(.green)
         .task {
@@ -137,6 +146,26 @@ struct PhoneContentView: View {
             Button("取消", role: .cancel) {}
         } message: {
             Text("仅清理所有提醒均已完成或已到期的记录；仍有未来提醒时间的记录会保留。")
+        }
+        .confirmationDialog(
+            "上传当前备份到\(pendingUploadChannel?.rawValue ?? "")？",
+            isPresented: Binding(
+                get: { pendingUploadChannel != nil },
+                set: { if !$0 { pendingUploadChannel = nil } }
+            ),
+            titleVisibility: .visible,
+            presenting: pendingUploadChannel
+        ) { channel in
+            Button("确认上传") {
+                pendingUploadChannel = nil
+                Task { await uploadCurrentBackup(to: channel) }
+            }
+            .disabled(isUploadingBackup)
+            Button("取消", role: .cancel) {
+                pendingUploadChannel = nil
+            }
+        } message: { channel in
+            Text("将用本机当前的提醒记录和模板数据覆盖\(channel.rawValue)现有备份。是否继续？")
         }
         .confirmationDialog(
             "用远程备份替换本机数据？",
@@ -407,7 +436,7 @@ struct PhoneContentView: View {
 
             Section("上传") {
                 Button {
-                    Task { await uploadCurrentBackup(to: channel) }
+                    pendingUploadChannel = channel
                 } label: {
                     HStack {
                         Spacer()
@@ -518,6 +547,7 @@ struct PhoneContentView: View {
 
     @MainActor
     private func uploadCurrentBackup(to channel: BackupChannel) async {
+        guard !isUploadingBackup else { return }
         isUploadingBackup = true
         defer { isUploadingBackup = false }
 
