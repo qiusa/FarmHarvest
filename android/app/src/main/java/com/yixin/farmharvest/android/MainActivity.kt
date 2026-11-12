@@ -168,7 +168,7 @@ private fun FarmHarvestApp(activity: MainActivity) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val snackbar = remember { SnackbarHostState() }
-    var selectedTab by rememberSaveable { mutableIntStateOf(0) }
+    var selectedTab by rememberSaveable { mutableIntStateOf(1) }
     var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
     var showAddPreset by remember { mutableStateOf(false) }
     var editingRecord by remember { mutableStateOf<CropRecord?>(null) }
@@ -178,7 +178,8 @@ private fun FarmHarvestApp(activity: MainActivity) {
     var pendingRemoteReplace by remember { mutableStateOf(false) }
     var pendingLocalReplaceUri by remember { mutableStateOf<Uri?>(null) }
     var importMode by remember { mutableStateOf(ImportMode.MERGE) }
-    var backupChannel by rememberSaveable { mutableStateOf(BackupChannel.LAN) }
+    var backupChannel by rememberSaveable { mutableStateOf(BackupChannel.PUBLIC) }
+    var pendingUploadChannel by remember { mutableStateOf<BackupChannel?>(null) }
     var isImporting by remember { mutableStateOf(false) }
     var isUploading by remember { mutableStateOf(false) }
 
@@ -301,8 +302,9 @@ private fun FarmHarvestApp(activity: MainActivity) {
     }
 
     fun startUpload(channel: BackupChannel) {
+        if (isUploading) return
+        isUploading = true
         scope.launch {
-            isUploading = true
             try {
                 val result = withContext(Dispatchers.IO) {
                     BackupApi.uploadBackup(FarmStore.exportBackup(activity), channel)
@@ -408,7 +410,7 @@ private fun FarmHarvestApp(activity: MainActivity) {
                 isImporting = isImporting,
                 isUploading = isUploading,
                 modifier = Modifier.padding(insets),
-                onUpload = { startUpload(backupChannel) },
+                onUpload = { pendingUploadChannel = backupChannel },
                 onRemoteImport = {
                     if (importMode == ImportMode.REPLACE) {
                         pendingLocalReplaceUri = null
@@ -429,6 +431,33 @@ private fun FarmHarvestApp(activity: MainActivity) {
                 },
             )
         }
+    }
+
+    pendingUploadChannel?.let { channel ->
+        AlertDialog(
+            onDismissRequest = { pendingUploadChannel = null },
+            title = { Text("上传当前备份到${channel.label}？") },
+            text = {
+                Text(
+                    when (channel) {
+                        BackupChannel.PUBLIC -> "将用本机当前的提醒记录和模板数据覆盖公网现有备份。是否继续？"
+                        BackupChannel.LAN -> "将把本机当前的提醒记录和模板数据上传到局域网共享目录。是否继续？"
+                    },
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    enabled = !isUploading,
+                    onClick = {
+                        pendingUploadChannel = null
+                        startUpload(channel)
+                    },
+                ) { Text("确认上传") }
+            },
+            dismissButton = {
+                TextButton(onClick = { pendingUploadChannel = null }) { Text("取消") }
+            },
+        )
     }
 
     if (showAddPreset) {
