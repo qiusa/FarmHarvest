@@ -9,6 +9,7 @@ import java.time.ZoneOffset
 import java.time.temporal.ChronoUnit
 import java.time.format.DateTimeFormatter
 import java.util.UUID
+import java.util.concurrent.CopyOnWriteArrayList
 
 data class HarvestCycle(
     val id: String = UUID.randomUUID().toString(),
@@ -60,6 +61,58 @@ data class ImportSummary(
 
 enum class ImportMode { MERGE, REPLACE }
 
+data class SyncChangeState(
+    val revision: Int = 0,
+    val dirtyRecordIDs: Set<String> = emptySet(),
+    val customCropsDirty: Boolean = false,
+    val hiddenBuiltinsDirty: Boolean = false,
+)
+
+data class SyncBackup(
+    val exportedAt: Long,
+    val records: List<CropRecord>,
+    val customCrops: List<CropPreset>,
+    val hiddenBuiltins: Set<String>,
+)
+
+fun initialSyncState(
+    records: List<CropRecord>,
+    crops: List<CropPreset>,
+    hidden: Set<String>,
+): SyncChangeState = SyncChangeState(
+    dirtyRecordIDs = records.mapTo(mutableSetOf()) { it.id },
+    customCropsDirty = crops.isNotEmpty(),
+    hiddenBuiltinsDirty = hidden.isNotEmpty(),
+)
+
+fun changedRecordIDs(old: List<CropRecord>, new: List<CropRecord>): Set<String> {
+    val oldById = old.associateBy { it.id }
+    val newIds = new.mapTo(mutableSetOf()) { it.id }
+    val changed = new.filter { oldById[it.id] != it }.mapTo(mutableSetOf()) { it.id }
+    changed += oldById.keys - newIds
+    return changed
+}
+
+fun trackedRecordSave(
+    state: SyncChangeState,
+    old: List<CropRecord>,
+    new: List<CropRecord>,
+): SyncChangeState? {
+    val diff = changedRecordIDs(old, new)
+    if (diff.isEmpty()) return null
+    return state.copy(
+        revision = state.revision + 1,
+        dirtyRecordIDs = state.dirtyRecordIDs + diff,
+    )
+}
+
+fun clearedSyncChanges(state: SyncChangeState, matchingRevision: Int): SyncChangeState? =
+    if (state.revision != matchingRevision) null else state.copy(
+        dirtyRecordIDs = emptySet(),
+        customCropsDirty = false,
+        hiddenBuiltinsDirty = false,
+    )
+
 object FarmStore {
     const val SOURCE_BACKUP_FILE_NAME = "FarmHarvest.json"
     const val SOURCE_BACKUP_URL = "http://192.168.200.94:10023/source/FarmHarvest.json"
@@ -75,6 +128,30 @@ object FarmStore {
     private const val LAST_LAN_UPLOAD_KEY = "last-upload-lan"
     private const val LAST_PUBLIC_UPLOAD_KEY = "last-upload-public"
     private const val NOTIFICATION_PERMISSION_ASKED_KEY = "notification-permission-asked"
+    private const val SYNC_STATE_KEY = "sync-state"
+
+    private val dataChangeListeners = CopyOnWriteArrayList<() -> Unit>()
+    private val syncedDataChangeListeners = CopyOnWriteArrayList<() -> Unit>()
+
+    fun addDataChangeListener(listener: () -> Unit) {
+        dataChangeListeners.add(listener)
+    }
+
+    fun removeDataChangeListener(listener: () -> Unit) {
+        dataChangeListeners.remove(listener)
+    }
+
+    fun addSyncedDataChangeListener(listener: () -> Unit) {
+        syncedDataChangeListeners.add(listener)
+    }
+
+    fun removeSyncedDataChangeListener(listener: () -> Unit) {
+        syncedDataChangeListeners.remove(listener)
+    }
+
+    private fun notifyDataChange() = dataChangeListeners.forEach { it() }
+
+    private fun notifySyncedDataChange() = syncedDataChangeListeners.forEach { it() }
 
     private val builtins = listOf(
         CropPreset("carrot", "快速事项", "FF8C42", 20),
@@ -108,7 +185,16 @@ object FarmStore {
     }
 
     fun saveRecords(context: Context, records: List<CropRecord>) {
-        prefs(context).edit().putString(RECORDS_KEY, encodeRecords(records).toString()).apply()
+        val previous = loadRecords(context)
+        val committed = prefs(context).edit()
+            .putString(RECORDS_KEY, encodeRecords(records).toString())
+            .commit()
+        if (!committed) return
+        val nextState = trackedRecordSave(loadSyncChangeState(context), previous, records)
+        if (nextState != null) {
+            persistSyncState(context, nextState)
+            notifyDataChange()
+        }
     }
 
     fun addRecord(
@@ -138,10 +224,36 @@ object FarmStore {
             colorHex = cropPalette[current.size % cropPalette.size],
             minutes = minutes.coerceAtLeast(1),
         )
-        prefs(context).edit()
-            .putString(CROPS_KEY, encodeCrops(current + preset).toString())
-            .apply()
+        writeCustomCrops(context, current + preset)
         return preset
+    }
+
+    internal fun writeCustomCrops(context: Context, crops: List<CropPreset>) {
+        val previous = loadCustomCrops(context)
+        val committed = prefs(context).edit()
+            .putString(CROPS_KEY, encodeCrops(crops).toString())
+            .commit()
+        if (!committed || crops == previous) return
+        val state = loadSyncChangeState(context)
+        persistSyncState(
+            context,
+            state.copy(revision = state.revision + 1, customCropsDirty = true),
+        )
+        notifyDataChange()
+    }
+
+    internal fun writeHiddenBuiltins(context: Context, hidden: Set<String>) {
+        val previous = hiddenBuiltins(context)
+        val committed = prefs(context).edit()
+            .putString(HIDDEN_KEY, JSONArray(hidden.sorted()).toString())
+            .commit()
+        if (!committed || hidden == previous) return
+        val state = loadSyncChangeState(context)
+        persistSyncState(
+            context,
+            state.copy(revision = state.revision + 1, hiddenBuiltinsDirty = true),
+        )
+        notifyDataChange()
     }
 
     fun updateRecord(context: Context, updated: CropRecord) {
@@ -180,25 +292,43 @@ object FarmStore {
         )
     }
 
-    fun exportBackup(context: Context, now: Long = System.currentTimeMillis()): ByteArray {
-        val hidden = hiddenBuiltins(context).sorted()
-        return JSONObject()
-            .put("version", 1)
-            .put("exportedAt", isoDate(now))
-            .put("records", encodeRecords(loadRecords(context)))
-            .put("customCrops", encodeCrops(loadCustomCrops(context)))
-            .put("hiddenBuiltins", JSONArray(hidden))
-            .toString(2)
-            .toByteArray(Charsets.UTF_8)
-    }
+    fun snapshot(context: Context, now: Long = System.currentTimeMillis()): SyncBackup =
+        SyncBackup(
+            exportedAt = now,
+            records = loadRecords(context),
+            customCrops = loadCustomCrops(context),
+            hiddenBuiltins = hiddenBuiltins(context),
+        )
 
-    fun importBackup(context: Context, bytes: ByteArray, mode: ImportMode): ImportSummary {
+    fun encodeBackup(backup: SyncBackup): ByteArray = JSONObject()
+        .put("version", 1)
+        .put("exportedAt", isoDate(backup.exportedAt))
+        .put("records", encodeRecords(backup.records))
+        .put("customCrops", encodeCrops(backup.customCrops))
+        .put("hiddenBuiltins", JSONArray(backup.hiddenBuiltins.sorted()))
+        .toString(2)
+        .toByteArray(Charsets.UTF_8)
+
+    fun parseBackup(bytes: ByteArray): SyncBackup {
         val backup = JSONObject(bytes.toString(Charsets.UTF_8))
         val version = backup.optInt("version", 1)
         require(version <= 1) { "备份版本 $version 高于当前 App 支持的版本" }
-        val backupRecords = parseRecords(backup.optJSONArray("records") ?: JSONArray())
-        val backupCrops = parseCrops(backup.optJSONArray("customCrops") ?: JSONArray())
-        val backupHidden = backup.optJSONArray("hiddenBuiltins").toStringSet()
+        return SyncBackup(
+            exportedAt = parseDate(backup.get("exportedAt")),
+            records = parseRecords(backup.optJSONArray("records") ?: JSONArray()),
+            customCrops = parseCrops(backup.optJSONArray("customCrops") ?: JSONArray()),
+            hiddenBuiltins = backup.optJSONArray("hiddenBuiltins").toStringSet(),
+        )
+    }
+
+    fun exportBackup(context: Context, now: Long = System.currentTimeMillis()): ByteArray =
+        encodeBackup(snapshot(context, now))
+
+    fun importBackup(context: Context, bytes: ByteArray, mode: ImportMode): ImportSummary {
+        val backup = parseBackup(bytes)
+        val backupRecords = backup.records
+        val backupCrops = backup.customCrops
+        val backupHidden = backup.hiddenBuiltins
         val currentRecords = loadRecords(context)
         val currentCrops = loadCustomCrops(context)
         val currentHidden = hiddenBuiltins(context)
@@ -209,10 +339,8 @@ object FarmStore {
         val cropOverwritten: Int
         if (mode == ImportMode.REPLACE) {
             saveRecords(context, backupRecords)
-            prefs(context).edit()
-                .putString(CROPS_KEY, encodeCrops(backupCrops).toString())
-                .putString(HIDDEN_KEY, JSONArray(backupHidden.sorted()).toString())
-                .apply()
+            writeCustomCrops(context, backupCrops)
+            writeHiddenBuiltins(context, backupHidden)
             recordAdded = backupRecords.size
             recordOverwritten = 0
             cropAdded = backupCrops.size
@@ -233,17 +361,13 @@ object FarmStore {
                 },
             )
             val preservedCrops = currentCrops.filterNot { it.id in backupCropIds }
-            prefs(context).edit()
-                .putString(
-                    CROPS_KEY,
-                    encodeCrops(
-                        preservedCrops + backupCrops.filter { crop ->
-                            preservedCrops.none { it.id == crop.id }
-                        },
-                    ).toString(),
-                )
-                .putString(HIDDEN_KEY, JSONArray((currentHidden + backupHidden).sorted()).toString())
-                .apply()
+            writeCustomCrops(
+                context,
+                preservedCrops + backupCrops.filter { crop ->
+                    preservedCrops.none { it.id == crop.id }
+                },
+            )
+            writeHiddenBuiltins(context, currentHidden + backupHidden)
         }
 
         return ImportSummary(
@@ -255,6 +379,58 @@ object FarmStore {
             cropsTotal = backupCrops.size,
             mode = mode,
         )
+    }
+
+    fun applySyncedData(context: Context, backup: SyncBackup) {
+        prefs(context).edit()
+            .putString(RECORDS_KEY, encodeRecords(backup.records).toString())
+            .putString(CROPS_KEY, encodeCrops(backup.customCrops).toString())
+            .putString(HIDDEN_KEY, JSONArray(backup.hiddenBuiltins.sorted()).toString())
+            .commit()
+        notifySyncedDataChange()
+    }
+
+    fun loadSyncChangeState(context: Context): SyncChangeState {
+        val raw = prefs(context).getString(SYNC_STATE_KEY, null)
+        if (raw == null) {
+            val initial = initialSyncState(
+                loadRecords(context),
+                loadCustomCrops(context),
+                hiddenBuiltins(context),
+            )
+            persistSyncState(context, initial)
+            return initial
+        }
+        return runCatching {
+            val json = JSONObject(raw)
+            SyncChangeState(
+                revision = json.optInt("revision", 0),
+                dirtyRecordIDs = json.optJSONArray("dirtyRecordIDs").toStringSet(),
+                customCropsDirty = json.optBoolean("customCropsDirty", false),
+                hiddenBuiltinsDirty = json.optBoolean("hiddenBuiltinsDirty", false),
+            )
+        }.getOrElse {
+            initialSyncState(loadRecords(context), loadCustomCrops(context), hiddenBuiltins(context))
+        }
+    }
+
+    fun clearSyncChanges(context: Context, matchingRevision: Int) {
+        val cleared = clearedSyncChanges(loadSyncChangeState(context), matchingRevision) ?: return
+        persistSyncState(context, cleared)
+    }
+
+    private fun persistSyncState(context: Context, state: SyncChangeState) {
+        prefs(context).edit()
+            .putString(
+                SYNC_STATE_KEY,
+                JSONObject()
+                    .put("revision", state.revision)
+                    .put("dirtyRecordIDs", JSONArray(state.dirtyRecordIDs.sorted()))
+                    .put("customCropsDirty", state.customCropsDirty)
+                    .put("hiddenBuiltinsDirty", state.hiddenBuiltinsDirty)
+                    .toString(),
+            )
+            .apply()
     }
 
     fun lastUploadTimestamp(context: Context, channel: BackupChannel): Long {
@@ -286,7 +462,7 @@ object FarmStore {
         prefs(context).edit().putBoolean(NOTIFICATION_PERMISSION_ASKED_KEY, true).apply()
     }
 
-    private fun hiddenBuiltins(context: Context): Set<String> = runCatching {
+    internal fun hiddenBuiltins(context: Context): Set<String> = runCatching {
         val raw = prefs(context).getString(HIDDEN_KEY, null) ?: return emptySet()
         JSONArray(raw).toStringSet()
     }.getOrDefault(emptySet())

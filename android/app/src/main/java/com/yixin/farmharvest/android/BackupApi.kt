@@ -34,6 +34,12 @@ enum class BackupChannel(
     ),
 }
 
+sealed class FetchResult {
+    data class Ok(val backup: SyncBackup) : FetchResult()
+    object NotFound : FetchResult()
+    object Failed : FetchResult()
+}
+
 object BackupApi {
     private const val MAX_BACKUP_BYTES = 10 * 1024 * 1024
     private const val DOWNLOAD_HOST = "192.168.200.94"
@@ -104,6 +110,41 @@ object BackupApi {
         } finally {
             connection.disconnect()
         }
+    }
+
+    fun fetchBackup(channel: BackupChannel): FetchResult {
+        val timeout = if (channel == BackupChannel.LAN) 10_000 else 30_000
+        return runCatching {
+            val connection = (URL(channel.backupUrl).openConnection() as HttpURLConnection).apply {
+                connectTimeout = timeout
+                readTimeout = timeout
+                instanceFollowRedirects = true
+                useCaches = false
+                setRequestProperty("Accept", "application/json")
+                setRequestProperty("Cache-Control", "no-cache")
+            }
+            try {
+                val status = connection.responseCode
+                if (status == 404) return FetchResult.NotFound
+                if (status !in 200..299) return FetchResult.Failed
+                val bytes = connection.inputStream.use { input ->
+                    val output = ByteArrayOutputStream()
+                    val buffer = ByteArray(8192)
+                    var total = 0
+                    while (true) {
+                        val count = input.read(buffer)
+                        if (count < 0) break
+                        total += count
+                        if (total > MAX_BACKUP_BYTES) error("备份文件超过 10 MB。")
+                        output.write(buffer, 0, count)
+                    }
+                    output.toByteArray()
+                }
+                FetchResult.Ok(FarmStore.parseBackup(bytes))
+            } finally {
+                connection.disconnect()
+            }
+        }.getOrElse { FetchResult.Failed }
     }
 
     fun uploadBackup(bytes: ByteArray): SourceUploadResult {

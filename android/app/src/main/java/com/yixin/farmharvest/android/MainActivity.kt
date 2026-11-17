@@ -102,12 +102,15 @@ class MainActivity : ComponentActivity() {
     internal var lastUploadTimestamp by mutableLongStateOf(0L)
     internal var lastPublicUploadTimestamp by mutableLongStateOf(0L)
     private var hasLoadedOnce = false
+    private val syncedDataChangeListener = { runOnUiThread { reload() } }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         WindowCompat.getInsetsController(window, window.decorView)
             .isAppearanceLightNavigationBars = Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1
         reload()
+        FarmStore.addSyncedDataChangeListener(syncedDataChangeListener)
+        AutoSync.start(this)
         setContent {
             FarmHarvestTheme {
                 FarmHarvestApp(activity = this)
@@ -118,6 +121,12 @@ class MainActivity : ComponentActivity() {
     override fun onResume() {
         super.onResume()
         if (hasLoadedOnce) reload()
+        AutoSync.onForeground()
+    }
+
+    override fun onDestroy() {
+        FarmStore.removeSyncedDataChangeListener(syncedDataChangeListener)
+        super.onDestroy()
     }
 
     internal fun reload() {
