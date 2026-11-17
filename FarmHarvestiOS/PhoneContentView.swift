@@ -102,6 +102,10 @@ struct PhoneContentView: View {
                 refresh()
             }
         }
+        .onReceive(NotificationCenter.default.publisher(
+            for: CropStore.syncedDataDidChangeNotification)) { _ in
+            refresh()
+        }
         .sheet(isPresented: $showAddCrop) {
             addCropSheet
         }

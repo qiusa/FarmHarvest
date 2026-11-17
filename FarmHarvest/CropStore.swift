@@ -289,19 +289,33 @@ enum CropStore {
     static var builtinCrops: [CropPreset] { builtinPresets }
 
     /// 被用户删除掉的内置模板 id（持久化，实现「默认模板也能删除」）
-    private static var hiddenBuiltinIDs: Set<String> {
+    static var hiddenBuiltinIDs: Set<String> {
         guard let data = try? Data(contentsOf: hiddenBuiltinsURL) else { return [] }
         return Set((try? JSONDecoder().decode([String].self, from: data)) ?? [])
     }
 
     private static func saveHiddenBuiltinIDs(_ ids: Set<String>) {
+        let previous = hiddenBuiltinIDs
+        guard writeHiddenBuiltinIDs(ids) else { return }
+        guard previous != ids else { return }
+        updateSyncState { s in
+            s.hiddenBuiltinsDirty = true
+            s.revision += 1
+        }
+        NotificationCenter.default.post(name: dataDidChangeNotification, object: nil)
+    }
+
+    @discardableResult
+    private static func writeHiddenBuiltinIDs(_ ids: Set<String>) -> Bool {
         let url = hiddenBuiltinsURL
-        guard let data = try? JSONEncoder().encode(Array(ids).sorted()) else { return }
+        guard let data = try? JSONEncoder().encode(Array(ids).sorted()) else { return false }
         do {
             try data.write(to: url, options: .atomic)
             reloadWidget()
+            return true
         } catch {
             diag("隐藏内置模板写入失败 \(url.path) -> \(error)")
+            return false
         }
     }
 
@@ -379,13 +393,27 @@ enum CropStore {
     }
 
     private static func saveCustom(_ list: [CropPreset]) {
+        let previous = customCrops()
+        guard writeCustomCrops(list) else { return }
+        guard previous != list else { return }
+        updateSyncState { s in
+            s.customCropsDirty = true
+            s.revision += 1
+        }
+        NotificationCenter.default.post(name: dataDidChangeNotification, object: nil)
+    }
+
+    @discardableResult
+    private static func writeCustomCrops(_ list: [CropPreset]) -> Bool {
         let url = customCropsURL
-        guard let data = try? JSONEncoder().encode(list) else { return }
+        guard let data = try? JSONEncoder().encode(list) else { return false }
         do {
             try data.write(to: url, options: .atomic)
             reloadWidget()
+            return true
         } catch {
             diag("自定义模板写入失败 \(url.path) -> \(error)")
+            return false
         }
     }
 
@@ -396,18 +424,46 @@ enum CropStore {
     }
 
     static func save(_ records: [CropRecord]) {
+        let previous = load()
+        guard writeRecords(records) else { return }
+        trackRecordChanges(from: previous, to: records)
+    }
+
+    @discardableResult
+    private static func writeRecords(_ records: [CropRecord]) -> Bool {
         let url = recordsURL
         guard let data = try? JSONEncoder().encode(records) else {
             diag("记录编码失败")
-            return
+            return false
         }
         do {
             try data.write(to: url, options: .atomic)
             diag("已写入 \(url.path)（\(isSharedContainerAvailable ? "共享" : "沙盒")）")
             reloadWidget()
+            return true
         } catch {
             diag("写入失败 \(url.path) -> \(error)")
+            return false
         }
+    }
+
+    private static func trackRecordChanges(from old: [CropRecord], to new: [CropRecord]) {
+        guard old != new else { return }
+        let oldByID = Dictionary(old.map { ($0.id, $0) }, uniquingKeysWith: { _, last in last })
+        let newByID = Dictionary(new.map { ($0.id, $0) }, uniquingKeysWith: { _, last in last })
+        var changedIDs = Set<String>()
+        for (id, record) in newByID where oldByID[id] != record {
+            changedIDs.insert(id)
+        }
+        // 删除也要标脏（墓碑）：否则同步时服务器上的旧副本会把本地已删记录加回来
+        for id in oldByID.keys where newByID[id] == nil {
+            changedIDs.insert(id)
+        }
+        updateSyncState { s in
+            s.dirtyRecordIDs.formUnion(changedIDs)
+            s.revision += 1
+        }
+        NotificationCenter.default.post(name: dataDidChangeNotification, object: nil)
     }
 
     /// 主动通知 WidgetKit 刷新时间线（主 App 启动/回到前台时调用，确保桌面组件及时同步）
@@ -415,6 +471,86 @@ enum CropStore {
         #if canImport(WidgetKit)
         WidgetCenter.shared.reloadAllTimelines()
         #endif
+    }
+
+    // MARK: - 自动同步改动追踪
+    // 只记录「哪些数据被本地改过」，不含任何网络代码（Widget 也编译本文件）。
+    // 同步引擎（AutoSync，仅主 App）据此做合并：改过的以本地为准，没改的以服务器最新为准。
+
+    static let dataDidChangeNotification = Notification.Name("FarmHarvestDataDidChange")
+    /// 同步引擎把服务器数据写回本地后发送：界面据此重载，否则窗口里还是旧数据
+    static let syncedDataDidChangeNotification = Notification.Name("FarmHarvestSyncedDataDidChange")
+
+    struct SyncChangeState: Codable {
+        /// 每次本地改动 +1。同步期间若 revision 变了，说明又有新改动，本轮结果作废重来。
+        var revision: Int = 0
+        /// 本地改过（含删除）的记录 id。删除的 id 是墓碑，防止服务器旧副本把已删记录加回来。
+        var dirtyRecordIDs: Set<String> = []
+        var customCropsDirty: Bool = false
+        var hiddenBuiltinsDirty: Bool = false
+    }
+
+    private static var syncStateURL: URL { storageRoot.appendingPathComponent("sync-state.json") }
+    private static let syncStateLock = NSLock()
+
+    static func loadSyncChangeState() -> SyncChangeState {
+        syncStateLock.lock()
+        defer { syncStateLock.unlock() }
+        return loadSyncChangeStateLocked()
+    }
+
+    private static func loadSyncChangeStateLocked() -> SyncChangeState {
+        if let data = try? Data(contentsOf: syncStateURL),
+           let state = try? JSONDecoder().decode(SyncChangeState.self, from: data) {
+            return state
+        }
+        // 首次运行（或状态文件损坏）：把现有本地数据全部标脏，
+        // 让第一次同步以本地为准上传，而不是被服务器旧内容清掉。
+        var state = SyncChangeState()
+        state.dirtyRecordIDs = Set(load().map(\.id))
+        state.customCropsDirty = !customCrops().isEmpty
+        state.hiddenBuiltinsDirty = !hiddenBuiltinIDs.isEmpty
+        persistSyncStateLocked(state)
+        return state
+    }
+
+    private static func updateSyncState(_ mutate: (inout SyncChangeState) -> Void) {
+        syncStateLock.lock()
+        defer { syncStateLock.unlock() }
+        var state = loadSyncChangeStateLocked()
+        mutate(&state)
+        persistSyncStateLocked(state)
+    }
+
+    private static func persistSyncStateLocked(_ state: SyncChangeState) {
+        guard let data = try? JSONEncoder().encode(state) else { return }
+        do {
+            try data.write(to: syncStateURL, options: .atomic)
+        } catch {
+            diag("同步状态写入失败 \(syncStateURL.path) -> \(error)")
+        }
+    }
+
+    /// 上传成功后清脏标记。仅当 revision 未变（同步期间没有新改动）才清，
+    /// 否则保留脏标记，交给下一轮同步。
+    static func clearSyncChanges(matchingRevision revision: Int) {
+        syncStateLock.lock()
+        defer { syncStateLock.unlock() }
+        var state = loadSyncChangeStateLocked()
+        guard state.revision == revision else { return }
+        state.dirtyRecordIDs = []
+        state.customCropsDirty = false
+        state.hiddenBuiltinsDirty = false
+        persistSyncStateLocked(state)
+    }
+
+    /// 同步引擎专用：把合并结果写回本地。不追踪改动、不发变更通知，
+    /// 避免「同步写入」又被当成「本地改动」触发下一轮同步。
+    static func applySyncedData(records: [CropRecord], customCrops: [CropPreset], hiddenBuiltins: Set<String>) {
+        writeRecords(records)
+        writeCustomCrops(customCrops)
+        writeHiddenBuiltinIDs(hiddenBuiltins)
+        NotificationCenter.default.post(name: syncedDataDidChangeNotification, object: nil)
     }
 
     /// 填入一个数字（提醒间隔（分钟））+ 选定模板 -> 新增一条提醒记录
@@ -527,15 +663,30 @@ enum CropStore {
 
     /// 导出全部数据为 JSON 字符串
     static func exportBackupJSON() throws -> Data {
-        let backup = Backup(
+        try encodeBackup(Backup(
             records: load(),
             customCrops: customCrops(),
             hiddenBuiltins: Array(hiddenBuiltinIDs).sorted()
-        )
+        ))
+    }
+
+    static func encodeBackup(_ backup: Backup) throws -> Data {
         let enc = JSONEncoder()
         enc.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
         enc.dateEncodingStrategy = .iso8601
         return try enc.encode(backup)
+    }
+
+    static func decodeBackup(from data: Data) throws -> Backup {
+        let dec = JSONDecoder()
+        dec.dateDecodingStrategy = .iso8601
+        let backup = try dec.decode(Backup.self, from: data)
+        guard backup.version <= 1 else {
+            throw NSError(domain: "FarmHarvest", code: 1, userInfo: [
+                NSLocalizedDescriptionKey: "备份版本 \(backup.version) 高于当前 App 支持的版本"
+            ])
+        }
+        return backup
     }
 
     /// 写入到指定 URL
@@ -571,14 +722,7 @@ enum CropStore {
 
     /// 从 JSON 数据导入
     static func importBackup(from data: Data, mode: ImportMode) throws -> ImportSummary {
-        let dec = JSONDecoder()
-        dec.dateDecodingStrategy = .iso8601
-        let backup = try dec.decode(Backup.self, from: data)
-        guard backup.version <= 1 else {
-            throw NSError(domain: "FarmHarvest", code: 1, userInfo: [
-                NSLocalizedDescriptionKey: "备份版本 \(backup.version) 高于当前 App 支持的版本"
-            ])
-        }
+        let backup = try decodeBackup(from: data)
 
         // 合并：备份中同 id 的记录覆盖现有记录，仅追加本地没有的
         var addedRecords: Int

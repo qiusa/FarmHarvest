@@ -11,6 +11,7 @@
 		AB0000000000000000000102 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000102 /* ContentView.swift */; };
 		AB0000000000000000000103 /* CropStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000103 /* CropStore.swift */; };
 		AB0000000000000000000105 /* SourceFileUploader.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000105 /* SourceFileUploader.swift */; };
+		AB0000000000000000000108 /* AutoSync.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000108 /* AutoSync.swift */; };
 		AB0000000000000000000107 /* WidgetPageIntent.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000107 /* WidgetPageIntent.swift */; };
 		AB0000000000000000000M01 /* CropManagerSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000M01 /* CropManagerSheet.swift */; };
 		AB0000000000000000000201 /* FarmHarvestWidget.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000201 /* FarmHarvestWidget.swift */; };
@@ -24,6 +25,7 @@
 		7E46E1742EB24142BC6CC206 /* PhoneContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9C935D48E55049F7A14C008D /* PhoneContentView.swift */; };
 		E773507AC988461284CC8453 /* CropStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000103 /* CropStore.swift */; };
 		E773507AC988461284CC8454 /* SourceFileUploader.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000105 /* SourceFileUploader.swift */; };
+		E773507AC988461284CC8455 /* AutoSync.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000108 /* AutoSync.swift */; };
 		6AA8CE8410A74E4497C7A494 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A0EDFFFD946C449C89217E5C /* Assets.xcassets */; };
 /* End PBXBuildFile section */
 
@@ -36,6 +38,7 @@
 		AA0000000000000000000102 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
 		AA0000000000000000000103 /* CropStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FarmHarvest/CropStore.swift; sourceTree = SOURCE_ROOT; };
 		AA0000000000000000000105 /* SourceFileUploader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SourceFileUploader.swift; sourceTree = "<group>"; };
+		AA0000000000000000000108 /* AutoSync.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FarmHarvest/AutoSync.swift; sourceTree = SOURCE_ROOT; };
 		AA0000000000000000000107 /* WidgetPageIntent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WidgetPageIntent.swift; sourceTree = "<group>"; };
 		AA0000000000000000000104 /* FarmHarvest.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = FarmHarvest.entitlements; sourceTree = "<group>"; };
 		AA0000000000000000000106 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
@@ -68,7 +71,7 @@
 
 /* Begin PBXGroup section */
 		AE0000000000000000000001 = {isa = PBXGroup; children = (AE0000000000000000000002, AE0000000000000000000003, 55E926479D344E14B300C4EE /* FarmHarvestiOS */, AE0000000000000000000004); sourceTree = "<group>"; };
-		AE0000000000000000000002 /* FarmHarvest */ = {isa = PBXGroup; children = (AA0000000000000000000101, AA0000000000000000000102, AA0000000000000000000103, AA0000000000000000000105, AA0000000000000000000107, AA0000000000000000000104, AA0000000000000000000106, AA0000000000000000000M01, AA0000000000000000000R01); path = FarmHarvest; sourceTree = "<group>"; };
+		AE0000000000000000000002 /* FarmHarvest */ = {isa = PBXGroup; children = (AA0000000000000000000101, AA0000000000000000000102, AA0000000000000000000103, AA0000000000000000000105, AA0000000000000000000108, AA0000000000000000000107, AA0000000000000000000104, AA0000000000000000000106, AA0000000000000000000M01, AA0000000000000000000R01); path = FarmHarvest; sourceTree = "<group>"; };
 		AE0000000000000000000003 /* FarmHarvestWidget */ = {isa = PBXGroup; children = (AA0000000000000000000201, AA0000000000000000000203, AA0000000000000000000W10, AA0000000000000000000W11, 8DCFA1CC2AFB41F3BEDAF027 /* CropStore.swift (Widget reference) */); path = FarmHarvestWidget; sourceTree = "<group>"; };
 		AE0000000000000000000004 /* Products */ = {isa = PBXGroup; children = (AA0000000000000000000A01, AA0000000000000000000A02); name = Products; sourceTree = "<group>"; };
 		55E926479D344E14B300C4EE /* FarmHarvestiOS */ = {isa = PBXGroup; children = (B5F06E3A50BA413CB0B897F4 /* App-iOS.swift */, 9C935D48E55049F7A14C008D /* PhoneContentView.swift */, A0EDFFFD946C449C89217E5C /* Assets.xcassets */,); path = FarmHarvestiOS; sourceTree = "<group>"; };
@@ -85,9 +88,9 @@
 /* End PBXProject section */
 
 /* Begin PBXSourcesBuildPhase section */
-		B0000000000000000000S01 /* Sources */ = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (AB0000000000000000000101 /* App.swift in Sources */, AB0000000000000000000102 /* ContentView.swift in Sources */, AB0000000000000000000103 /* CropStore.swift in Sources */, AB0000000000000000000105 /* SourceFileUploader.swift in Sources */, AB0000000000000000000107 /* WidgetPageIntent.swift in Sources */, AB0000000000000000000M01 /* CropManagerSheet.swift in Sources */); runOnlyForDeploymentPostprocessing = 0; };
+		B0000000000000000000S01 /* Sources */ = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (AB0000000000000000000101 /* App.swift in Sources */, AB0000000000000000000102 /* ContentView.swift in Sources */, AB0000000000000000000103 /* CropStore.swift in Sources */, AB0000000000000000000105 /* SourceFileUploader.swift in Sources */, AB0000000000000000000108 /* AutoSync.swift in Sources */, AB0000000000000000000107 /* WidgetPageIntent.swift in Sources */, AB0000000000000000000M01 /* CropManagerSheet.swift in Sources */); runOnlyForDeploymentPostprocessing = 0; };
 		B0000000000000000000S02 /* Sources */ = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (AB0000000000000000000201 /* FarmHarvestWidget.swift in Sources */, AB0000000000000000000202 /* CropStore.swift in Sources */, AB0000000000000000000203 /* WidgetPageIntent.swift in Sources */); runOnlyForDeploymentPostprocessing = 0; };
-		AC9374416DB440E0AB3FBA56 /* Sources */ = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (4D94EB3FA87A454AAA86F0DF /* App-iOS.swift in Sources */, 7E46E1742EB24142BC6CC206 /* PhoneContentView.swift in Sources */, E773507AC988461284CC8453 /* CropStore.swift in Sources */, E773507AC988461284CC8454 /* SourceFileUploader.swift in Sources */,); runOnlyForDeploymentPostprocessing = 0; };
+		AC9374416DB440E0AB3FBA56 /* Sources */ = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (4D94EB3FA87A454AAA86F0DF /* App-iOS.swift in Sources */, 7E46E1742EB24142BC6CC206 /* PhoneContentView.swift in Sources */, E773507AC988461284CC8453 /* CropStore.swift in Sources */, E773507AC988461284CC8454 /* SourceFileUploader.swift in Sources */, E773507AC988461284CC8455 /* AutoSync.swift in Sources */,); runOnlyForDeploymentPostprocessing = 0; };
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */

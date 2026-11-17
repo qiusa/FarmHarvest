@@ -107,6 +107,10 @@ struct CropManagerSheet: View {
                 }
             }
         }
+        .onReceive(NotificationCenter.default.publisher(
+            for: CropStore.syncedDataDidChangeNotification)) { _ in
+            refresh()
+        }
         .alert("删除「\(pendingDelete?.name ?? "")」？",
                isPresented: Binding(get: { pendingDelete != nil },
                                     set: { if !$0 { pendingDelete = nil } })) {

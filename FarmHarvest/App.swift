@@ -8,6 +8,7 @@ struct FarmHarvestApp: App {
             ContentView()
                 .onAppear {
                     WidgetCenter.shared.reloadAllTimelines()
+                    AutoSync.start()
                 }
         }
     }

@@ -5,6 +5,9 @@ struct FarmHarvestiOSApp: App {
     var body: some Scene {
         WindowGroup {
             PhoneContentView()
+                .onAppear {
+                    AutoSync.start()
+                }
         }
     }
 }

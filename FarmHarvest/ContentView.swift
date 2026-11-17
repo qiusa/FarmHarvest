@@ -564,6 +564,11 @@ struct ContentView: View {
                 diagLines = filtered + lines
             }
         }
+        .onReceive(NotificationCenter.default.publisher(
+            for: CropStore.syncedDataDidChangeNotification)) { _ in
+            records = CropStore.load()
+            CropNotifier.reschedule(records)
+        }
     }
 
     private func refreshNotificationPermission() {
