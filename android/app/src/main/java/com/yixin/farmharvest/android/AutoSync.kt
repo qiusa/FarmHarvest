@@ -75,15 +75,21 @@ object AutoSync {
         val context = appContext ?: return
         val changes = FarmStore.loadSyncChangeState(context)
         val local = FarmStore.snapshot(context)
-        val lan = BackupApi.fetchBackup(BackupChannel.LAN)
-        val wan = BackupApi.fetchBackup(BackupChannel.PUBLIC)
-        val backups = listOfNotNull(
-            (lan as? FetchResult.Ok)?.backup,
-            (wan as? FetchResult.Ok)?.backup,
-        )
-        val hasNotFound = lan is FetchResult.NotFound || wan is FetchResult.NotFound
-        val base = backups.maxByOrNull { it.exportedAt }
-            ?: if (hasNotFound) local else return
+        val base: SyncBackup
+        val needsUpload: Boolean
+        when (val fetched = BackupApi.fetchBackup()) {
+            is FetchResult.Ok -> {
+                base = fetched.backup
+                needsUpload = false
+            }
+            // 服务器可达但没有备份文件：用本地数据重新播种，不做合并删除
+            FetchResult.NotFound -> {
+                base = local
+                needsUpload = true
+            }
+            // 服务器不可达：不动本地数据，等下次触发再试
+            FetchResult.Failed -> return
+        }
         if (FarmStore.loadSyncChangeState(context).revision != changes.revision) {
             schedule(RETRY_DEBOUNCE_MS)
             return
@@ -92,20 +98,13 @@ object AutoSync {
         if (!sameContent(merged, local)) {
             FarmStore.applySyncedData(context, merged)
         }
-        val needsUpload = hasNotFound || backups.isEmpty() || !sameContent(merged, base)
-        if (!needsUpload) return
+        if (!needsUpload && sameContent(merged, base)) return
         val payload = FarmStore.encodeBackup(merged.copy(exportedAt = System.currentTimeMillis()))
-        var anySuccess = false
-        for (channel in BackupChannel.entries) {
-            runCatching { BackupApi.uploadBackup(payload, channel) }
-                .onSuccess {
-                    anySuccess = true
-                    FarmStore.setLastUploadTimestamp(context, channel, System.currentTimeMillis())
-                }
-                .onFailure { Log.w(TAG, "${channel.label}上传失败：${it.message}") }
-        }
-        if (anySuccess) {
-            FarmStore.clearSyncChanges(context, changes.revision)
-        }
+        runCatching { BackupApi.uploadBackup(payload) }
+            .onSuccess {
+                FarmStore.setLastUploadTimestamp(context, System.currentTimeMillis())
+                FarmStore.clearSyncChanges(context, changes.revision)
+            }
+            .onFailure { Log.w(TAG, "上传失败：${it.message}") }
     }
 }

@@ -99,7 +99,6 @@ class MainActivity : ComponentActivity() {
     internal var selectedPresetId by mutableStateOf("")
     internal var minutesText by mutableStateOf("30")
     internal var noteText by mutableStateOf("")
-    internal var lastUploadTimestamp by mutableLongStateOf(0L)
     internal var lastPublicUploadTimestamp by mutableLongStateOf(0L)
     private var hasLoadedOnce = false
     private val syncedDataChangeListener = { runOnUiThread { reload() } }
@@ -140,8 +139,7 @@ class MainActivity : ComponentActivity() {
             selectedPresetId = presets.first().id
             minutesText = presets.first().minutes.toString()
         }
-        lastUploadTimestamp = FarmStore.lastUploadTimestamp(this, BackupChannel.LAN)
-        lastPublicUploadTimestamp = FarmStore.lastUploadTimestamp(this, BackupChannel.PUBLIC)
+        lastPublicUploadTimestamp = FarmStore.lastUploadTimestamp(this)
         ReminderScheduler.reschedule(this, loadedRecords)
         hasLoadedOnce = true
     }
@@ -187,8 +185,7 @@ private fun FarmHarvestApp(activity: MainActivity) {
     var pendingRemoteReplace by remember { mutableStateOf(false) }
     var pendingLocalReplaceUri by remember { mutableStateOf<Uri?>(null) }
     var importMode by remember { mutableStateOf(ImportMode.MERGE) }
-    var backupChannel by rememberSaveable { mutableStateOf(BackupChannel.PUBLIC) }
-    var pendingUploadChannel by remember { mutableStateOf<BackupChannel?>(null) }
+    var showUploadConfirmation by remember { mutableStateOf(false) }
     var isImporting by remember { mutableStateOf(false) }
     var isUploading by remember { mutableStateOf(false) }
 
@@ -310,23 +307,20 @@ private fun FarmHarvestApp(activity: MainActivity) {
         }
     }
 
-    fun startUpload(channel: BackupChannel) {
+    fun startUpload() {
         if (isUploading) return
         isUploading = true
         scope.launch {
             try {
                 val result = withContext(Dispatchers.IO) {
-                    BackupApi.uploadBackup(FarmStore.exportBackup(activity), channel)
+                    BackupApi.uploadBackup(FarmStore.exportBackup(activity))
                 }
                 val timestamp = System.currentTimeMillis()
-                FarmStore.setLastUploadTimestamp(activity, channel, timestamp)
-                when (channel) {
-                    BackupChannel.LAN -> activity.lastUploadTimestamp = timestamp
-                    BackupChannel.PUBLIC -> activity.lastPublicUploadTimestamp = timestamp
-                }
-                message("已上传到${channel.label}：${result.fileName}，可从备份地址导入最新内容。")
+                FarmStore.setLastUploadTimestamp(activity, timestamp)
+                activity.lastPublicUploadTimestamp = timestamp
+                message("已上传：${result.fileName}，可从备份地址导入最新内容。")
             } catch (error: Exception) {
-                message("${channel.label}上传失败：${error.message ?: "请检查网络后重试"}")
+                message("上传失败：${error.message ?: "请检查网络后重试"}")
             } finally {
                 isUploading = false
             }
@@ -412,21 +406,19 @@ private fun FarmHarvestApp(activity: MainActivity) {
             )
             else -> DataScreen(
                 activity = activity,
-                backupChannel = backupChannel,
-                onBackupChannelChange = { backupChannel = it },
                 importMode = importMode,
                 onImportModeChange = { importMode = it },
                 isImporting = isImporting,
                 isUploading = isUploading,
                 modifier = Modifier.padding(insets),
-                onUpload = { pendingUploadChannel = backupChannel },
+                onUpload = { showUploadConfirmation = true },
                 onRemoteImport = {
                     if (importMode == ImportMode.REPLACE) {
                         pendingLocalReplaceUri = null
                         pendingRemoteReplace = true
                         showReplaceConfirmation = true
                     } else {
-                        startImport(ImportMode.MERGE, backupChannel.backupUrl)
+                        startImport(ImportMode.MERGE, FarmStore.BUILD_MANAGER_BACKUP_URL)
                     }
                 },
                 onLocalImport = { openBackupLauncher.launch(arrayOf("application/json", "text/json")) },
@@ -434,7 +426,7 @@ private fun FarmHarvestApp(activity: MainActivity) {
                 onCopyAddress = {
                     val clipboard = activity.getSystemService(ClipboardManager::class.java)
                     clipboard?.setPrimaryClip(
-                        ClipData.newPlainText("FarmHarvest backup URL", backupChannel.backupUrl),
+                        ClipData.newPlainText("FarmHarvest backup URL", FarmStore.BUILD_MANAGER_BACKUP_URL),
                     )
                     message("已复制备份地址，可发给另一台设备导入。")
                 },
@@ -442,29 +434,24 @@ private fun FarmHarvestApp(activity: MainActivity) {
         }
     }
 
-    pendingUploadChannel?.let { channel ->
+    if (showUploadConfirmation) {
         AlertDialog(
-            onDismissRequest = { pendingUploadChannel = null },
-            title = { Text("上传当前备份到${channel.label}？") },
+            onDismissRequest = { showUploadConfirmation = false },
+            title = { Text("上传当前备份？") },
             text = {
-                Text(
-                    when (channel) {
-                        BackupChannel.PUBLIC -> "将用本机当前的提醒记录和模板数据覆盖公网现有备份。是否继续？"
-                        BackupChannel.LAN -> "将把本机当前的提醒记录和模板数据上传到局域网共享目录。是否继续？"
-                    },
-                )
+                Text("将用本机当前的提醒记录和模板数据覆盖服务器上的现有备份。是否继续？")
             },
             confirmButton = {
                 TextButton(
                     enabled = !isUploading,
                     onClick = {
-                        pendingUploadChannel = null
-                        startUpload(channel)
+                        showUploadConfirmation = false
+                        startUpload()
                     },
                 ) { Text("确认上传") }
             },
             dismissButton = {
-                TextButton(onClick = { pendingUploadChannel = null }) { Text("取消") }
+                TextButton(onClick = { showUploadConfirmation = false }) { Text("取消") }
             },
         )
     }
@@ -561,7 +548,7 @@ private fun FarmHarvestApp(activity: MainActivity) {
                     pendingLocalReplaceUri = null
                     pendingRemoteReplace = false
                     if (isRemote) {
-                        startImport(ImportMode.REPLACE, backupChannel.backupUrl)
+                        startImport(ImportMode.REPLACE, FarmStore.BUILD_MANAGER_BACKUP_URL)
                     } else if (localUri != null) {
                         startLocalImport(localUri, ImportMode.REPLACE)
                     }
@@ -894,8 +881,6 @@ private fun RecordCard(
 @Composable
 private fun DataScreen(
     activity: MainActivity,
-    backupChannel: BackupChannel,
-    onBackupChannelChange: (BackupChannel) -> Unit,
     importMode: ImportMode,
     onImportModeChange: (ImportMode) -> Unit,
     isImporting: Boolean,
@@ -968,21 +953,14 @@ private fun DataScreen(
                 Modifier.fillMaxWidth().padding(16.dp),
                 verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
-                SectionHeading("同步通道")
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    BackupChannel.entries.forEach { channel ->
-                        FilterChip(
-                            selected = backupChannel == channel,
-                            onClick = { onBackupChannelChange(channel) },
-                            label = { Text(channel.label) },
-                        )
-                    }
-                }
-                Text(backupChannel.description, color = Color.Gray, style = MaterialTheme.typography.bodySmall)
-
                 SectionHeading("备份地址")
                 Text(
-                    backupChannel.backupUrl,
+                    "走公网 HTTPS，任何网络都能存取；服务器上只保留最新一份备份。",
+                    color = Color.Gray,
+                    style = MaterialTheme.typography.bodySmall,
+                )
+                Text(
+                    FarmStore.BUILD_MANAGER_BACKUP_URL,
                     color = Color(0xFF4F5D50),
                     style = MaterialTheme.typography.bodySmall,
                 )
@@ -993,7 +971,7 @@ private fun DataScreen(
                 HorizontalDivider(color = Color(0xFFF0F0F0))
                 SectionHeading("上传")
                 Text(
-                    "上传本机当前数据并更新所选通道的备份。手机上的修改不会自动同步。",
+                    "把本机当前数据推到备份地址，覆盖服务器上的那一份。",
                     color = Color.Gray,
                     style = MaterialTheme.typography.bodySmall,
                 )
@@ -1010,10 +988,7 @@ private fun DataScreen(
                         Text("↑  上传当前备份")
                     }
                 }
-                val uploadTimestamp = when (backupChannel) {
-                    BackupChannel.LAN -> activity.lastUploadTimestamp
-                    BackupChannel.PUBLIC -> activity.lastPublicUploadTimestamp
-                }
+                val uploadTimestamp = activity.lastPublicUploadTimestamp
                 val uploadTime = if (uploadTimestamp > 0) formatUploadTime(uploadTimestamp) else "尚未上传"
                 Text("最近上传：$uploadTime", color = Color.Gray, style = MaterialTheme.typography.bodySmall)
 
@@ -1053,7 +1028,7 @@ private fun DataScreen(
                         Text("↓  下载并导入")
                     }
                 }
-                Text(backupChannel.reachabilityHint, color = Color.Gray, style = MaterialTheme.typography.bodySmall)
+                Text("任何网络均可下载", color = Color.Gray, style = MaterialTheme.typography.bodySmall)
 
                 HorizontalDivider(color = Color(0xFFF0F0F0))
                 SectionHeading("本地文件")

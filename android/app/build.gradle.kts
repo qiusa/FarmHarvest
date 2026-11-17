@@ -50,6 +50,27 @@ android {
         compose = true
     }
 
+    lint {
+        // compose-runtime 1.7.3 自带的 lint 检查引用了 AGP 8.7.3 lint 运行时里不存在的
+        // IntelliJ PSI/K2 分析类，fresh 分析必崩（NoClassDefFoundError）。升级 AGP 前整组禁用。
+        disable += setOf(
+            "AutoboxingStateCreation",
+            "AutoboxingStateValueProperty",
+            "ComposableLambdaParameterNaming",
+            "ComposableLambdaParameterPosition",
+            "ComposableNaming",
+            "CompositionLocalNaming",
+            "CoroutineCreationDuringComposition",
+            "FlowOperatorInvokedInComposition",
+            "MutableCollectionMutableState",
+            "OpaqueUnitKey",
+            "ProduceStateDoesNotAssignValue",
+            "RememberReturnType",
+            "StateFlowValueCalledInComposition",
+            "UnrememberedMutableState",
+        )
+    }
+
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
