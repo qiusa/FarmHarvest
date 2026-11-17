@@ -30,6 +30,7 @@ struct PhoneContentView: View {
     private var lastSuccessfulBuildManagerUploadTimestamp: Double = 0
     @State private var showRemoteReplaceConfirmation = false
     @State private var pendingRemoteImportURL: URL?
+    @State private var didCopyAddress = false
     @State private var message: String?
 
     private var selectedPreset: CropPreset? {
@@ -402,93 +403,72 @@ struct PhoneContentView: View {
 
     private var remoteImportForm: some View {
         Form {
-            Section("备份地址") {
-                Text(BuildManagerBackupUploader.backupURLString)
-                    .font(.footnote.monospaced())
-                    .textSelection(.enabled)
-
-                Button {
-                    UIPasteboard.general.string = BuildManagerBackupUploader.backupURLString
-                    message = "已复制备份地址，可发给另一台设备导入。"
-                } label: {
-                    Label("复制地址", systemImage: "doc.on.doc")
-                }
-
-                Text("走公网 HTTPS，任何网络都能存取；服务器上只保留最新一份备份。")
-                    .font(.footnote)
+            Section {
+                LabeledContent("最近上传", value: lastUploadText(lastSuccessfulBuildManagerUploadTimestamp))
                     .foregroundStyle(.secondary)
-            }
 
-            Section("上传") {
                 Button {
                     showUploadConfirmation = true
                 } label: {
-                    HStack {
-                        Spacer()
-                        if isUploadingBackup {
-                            ProgressView("正在上传备份…")
-                        } else {
-                            Label("上传当前备份", systemImage: "arrow.up.doc")
-                        }
-                        Spacer()
+                    if isUploadingBackup {
+                        ProgressView("正在上传…")
+                    } else {
+                        Label("上传当前备份", systemImage: "arrow.up.doc")
                     }
                 }
                 .disabled(isUploadingBackup)
-
-                Text(lastUploadText(lastSuccessfulBuildManagerUploadTimestamp))
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-
-                Text("上传会用本机数据覆盖备份地址上的那一份，服务器只保留最新一份。")
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
+            } header: {
+                Text("云备份")
+            } footer: {
+                Text("改动会自动同步；服务器只保留最新一份备份，任何网络均可存取。")
             }
 
-            Section("下载并导入") {
+            Section("备份地址") {
+                HStack(alignment: .firstTextBaseline) {
+                    Text(BuildManagerBackupUploader.backupURLString)
+                        .font(.footnote.monospaced())
+                        .textSelection(.enabled)
+                    Spacer()
+                    Button {
+                        UIPasteboard.general.string = BuildManagerBackupUploader.backupURLString
+                        didCopyAddress = true
+                        Task {
+                            try? await Task.sleep(for: .seconds(1.5))
+                            didCopyAddress = false
+                        }
+                    } label: {
+                        Image(systemName: didCopyAddress ? "checkmark" : "doc.on.doc")
+                            .foregroundStyle(didCopyAddress ? Color.green : Color.accentColor)
+                    }
+                    .buttonStyle(.borderless)
+                    .accessibilityLabel("复制备份地址")
+                }
+            }
+
+            Section {
                 Picker("方式", selection: $remoteImportMode) {
                     Text("合并").tag(CropStore.ImportMode.merge)
                     Text("替换").tag(CropStore.ImportMode.replace)
                 }
                 .pickerStyle(.segmented)
 
-                Text(remoteImportMode == .merge
-                     ? "同 ID 的记录和模板会更新，本机独有的项目保留。"
-                     : "完全采用远程备份，会覆盖本机记录、自定义模板和隐藏的内置模板。")
-                    .font(.footnote)
-                    .foregroundStyle(remoteImportMode == .replace ? Color.orange : Color.secondary)
-
                 Button {
                     startRemoteImport(from: BuildManagerBackupUploader.backupURLString)
                 } label: {
-                    HStack {
-                        Spacer()
-                        if isImportingRemoteBackup {
-                            ProgressView("正在下载并导入…")
-                        } else {
-                            Label("下载并导入", systemImage: "arrow.down.doc")
-                        }
-                        Spacer()
+                    if isImportingRemoteBackup {
+                        ProgressView("正在下载并导入…")
+                    } else {
+                        Label("下载并导入", systemImage: "arrow.down.doc")
                     }
                 }
                 .disabled(isImportingRemoteBackup)
-
-                Text("任何网络均可下载")
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-            }
-
-            Section {
-                Text("改动会自动同步；服务器只保留最新一份备份。")
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-            }
-        }
-        .scrollDismissesKeyboard(.interactively)
-        .background(DismissKeyboardOnBackgroundTap())
-        .toolbar {
-            ToolbarItemGroup(placement: .keyboard) {
-                Spacer()
-                Button("收起键盘", action: dismissKeyboard)
+            } header: {
+                Text("下载并导入")
+            } footer: {
+                Text(remoteImportMode == .merge
+                     ? "同 ID 的记录和模板会更新，本机独有的项目保留。"
+                     : "完全采用远程备份，会覆盖本机记录、自定义模板和隐藏的内置模板。")
+                    .foregroundStyle(remoteImportMode == .replace ? Color.orange : Color.secondary)
             }
         }
     }
@@ -536,9 +516,9 @@ struct PhoneContentView: View {
 
         do {
             let data = try CropStore.exportBackupJSON()
-            let fileName = try await BuildManagerBackupUploader.uploadBackup(data: data).fileName
+            _ = try await BuildManagerBackupUploader.uploadBackup(data: data)
             lastSuccessfulBuildManagerUploadTimestamp = Date().timeIntervalSince1970
-            message = "已上传：\(fileName)，备份地址已指向这份最新内容。"
+            message = "上传成功，服务器备份已更新。"
         } catch {
             message = "上传失败：\(error.localizedDescription)"
         }
@@ -546,7 +526,7 @@ struct PhoneContentView: View {
 
     private func lastUploadText(_ timestamp: Double) -> String {
         guard timestamp > 0 else { return "尚未上传" }
-        return "最近上传 " + Date(timeIntervalSince1970: timestamp)
+        return Date(timeIntervalSince1970: timestamp)
             .formatted(date: .numeric, time: .shortened)
     }
 
