@@ -6,7 +6,7 @@ import AppKit
 import UIKit
 #endif
 
-/// 自动同步：本地任何改动后防抖触发，拉取两条通道的最新备份，
+/// 自动同步：本地任何改动后防抖触发，拉取服务器最新备份，
 /// 按「本地改过的以本地为准，没改的以服务器最新为准」合并，写回本地并上传。
 /// 只被 macOS 与 iOS 主 App 编译，Widget 不含此文件。
 enum AutoSync {
@@ -87,12 +87,12 @@ enum AutoSync {
         case failed
     }
 
-    private static func fetch(channel: BackupChannel) async -> FetchResult {
-        guard let url = URL(string: channel.backupURLString) else { return .failed }
+    private static func fetch() async -> FetchResult {
+        guard let url = URL(string: BuildManagerBackupUploader.backupURLString) else { return .failed }
         var request = URLRequest(
             url: url,
             cachePolicy: .reloadIgnoringLocalCacheData,
-            timeoutInterval: channel == .lan ? 10 : 30
+            timeoutInterval: 30
         )
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         request.setValue("no-cache", forHTTPHeaderField: "Cache-Control")
@@ -101,34 +101,28 @@ enum AutoSync {
             guard let http = response as? HTTPURLResponse else { return .failed }
             if http.statusCode == 404 { return .notFound }
             guard (200..<300).contains(http.statusCode), data.count <= 10 * 1024 * 1024 else {
-                log.error("拉取\(channel.rawValue, privacy: .public)备份失败：HTTP \(http.statusCode)")
+                log.error("拉取备份失败：HTTP \(http.statusCode)")
                 return .failed
             }
             guard let backup = try? CropStore.decodeBackup(from: data) else {
-                log.error("拉取\(channel.rawValue, privacy: .public)备份失败：内容无法解析")
+                log.error("拉取备份失败：内容无法解析")
                 return .failed
             }
             return .backup(backup)
         } catch {
-            log.error("拉取\(channel.rawValue, privacy: .public)备份失败：\(error.localizedDescription, privacy: .public)")
+            log.error("拉取备份失败：\(error.localizedDescription, privacy: .public)")
             return .failed
         }
     }
 
-    private static func upload(channel: BackupChannel, data: Data) async -> Bool {
+    private static func upload(data: Data) async -> Bool {
         do {
-            switch channel {
-            case .lan:
-                _ = try await SourceFileUploader.uploadBackup(data: data)
-                UserDefaults.standard.set(Date().timeIntervalSince1970, forKey: CropStore.lastSuccessfulUploadTimestampKey)
-            case .wan:
-                _ = try await BuildManagerBackupUploader.uploadBackup(data: data)
-                UserDefaults.standard.set(Date().timeIntervalSince1970, forKey: CropStore.lastSuccessfulBuildManagerUploadTimestampKey)
-            }
-            log.info("自动同步上传成功：\(channel.rawValue, privacy: .public)")
+            _ = try await BuildManagerBackupUploader.uploadBackup(data: data)
+            UserDefaults.standard.set(Date().timeIntervalSince1970, forKey: CropStore.lastSuccessfulBuildManagerUploadTimestampKey)
+            log.info("自动同步上传成功")
             return true
         } catch {
-            log.error("自动同步上传失败（\(channel.rawValue, privacy: .public)）：\(error.localizedDescription, privacy: .public)")
+            log.error("自动同步上传失败：\(error.localizedDescription, privacy: .public)")
             return false
         }
     }
@@ -176,18 +170,10 @@ enum AutoSync {
                 hiddenBuiltins: Array(localHidden).sorted()
             )
 
-            async let lanFetch = AutoSync.fetch(channel: .lan)
-            async let wanFetch = AutoSync.fetch(channel: .wan)
-            let fetches = await [lanFetch, wanFetch]
-
-            let backups = fetches.compactMap { result -> CropStore.Backup? in
-                if case .backup(let backup) = result { return backup }
-                return nil
-            }
-            let hasNotFound = fetches.contains { if case .notFound = $0 { return true }; return false }
-
             let merged: CropStore.Backup
-            if let base = backups.max(by: { $0.exportedAt < $1.exportedAt }) {
+            var needsUpload: Bool
+            switch await AutoSync.fetch() {
+            case .backup(let base):
                 merged = AutoSync.mergedBackup(
                     base: base,
                     localRecords: localRecords,
@@ -195,12 +181,14 @@ enum AutoSync {
                     localHidden: localHidden,
                     changes: state
                 )
-            } else if hasNotFound {
-                // 通道可达但没有备份文件：用本地数据重新播种，不做合并删除
+                needsUpload = !AutoSync.sameContent(merged, base)
+            case .notFound:
+                // 服务器可达但没有备份文件：用本地数据重新播种，不做合并删除
                 merged = localSnapshot
-            } else {
-                // 两条通道都不可达：不动本地数据，等下次触发再试
-                AutoSync.log.error("两条通道都不可达，跳过本轮自动同步")
+                needsUpload = true
+            case .failed:
+                // 服务器不可达：不动本地数据，等下次触发再试
+                AutoSync.log.error("服务器不可达，跳过本轮自动同步")
                 return
             }
 
@@ -218,9 +206,6 @@ enum AutoSync {
                 )
             }
 
-            // 任一通道内容与合并结果不同（含 404 待播种）就要上传；两条都一致则跳过
-            let needsUpload = hasNotFound || backups.isEmpty
-                || backups.contains { !AutoSync.sameContent(merged, $0) }
             var anySuccess = !needsUpload
             if needsUpload {
                 var toUpload = merged
@@ -229,10 +214,7 @@ enum AutoSync {
                     AutoSync.log.error("合并结果编码失败，跳过上传")
                     return
                 }
-                async let lanUpload = AutoSync.upload(channel: .lan, data: data)
-                async let wanUpload = AutoSync.upload(channel: .wan, data: data)
-                let results = await [lanUpload, wanUpload]
-                anySuccess = results.contains(true)
+                anySuccess = await AutoSync.upload(data: data)
             }
 
             if anySuccess {

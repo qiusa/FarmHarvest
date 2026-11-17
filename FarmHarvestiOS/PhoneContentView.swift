@@ -25,10 +25,7 @@ struct PhoneContentView: View {
     @State private var remoteImportMode: CropStore.ImportMode = .merge
     @State private var isImportingRemoteBackup = false
     @State private var isUploadingBackup = false
-    @State private var channel: BackupChannel = .wan
-    @State private var pendingUploadChannel: BackupChannel?
-    @AppStorage(CropStore.lastSuccessfulUploadTimestampKey)
-    private var lastSuccessfulUploadTimestamp: Double = 0
+    @State private var showUploadConfirmation = false
     @AppStorage(CropStore.lastSuccessfulBuildManagerUploadTimestampKey)
     private var lastSuccessfulBuildManagerUploadTimestamp: Double = 0
     @State private var showRemoteReplaceConfirmation = false
@@ -152,24 +149,17 @@ struct PhoneContentView: View {
             Text("仅清理所有提醒均已完成或已到期的记录；仍有未来提醒时间的记录会保留。")
         }
         .confirmationDialog(
-            "上传当前备份到\(pendingUploadChannel?.rawValue ?? "")？",
-            isPresented: Binding(
-                get: { pendingUploadChannel != nil },
-                set: { if !$0 { pendingUploadChannel = nil } }
-            ),
-            titleVisibility: .visible,
-            presenting: pendingUploadChannel
-        ) { channel in
+            "上传当前备份？",
+            isPresented: $showUploadConfirmation,
+            titleVisibility: .visible
+        ) {
             Button("确认上传") {
-                pendingUploadChannel = nil
-                Task { await uploadCurrentBackup(to: channel) }
+                Task { await uploadCurrentBackup() }
             }
             .disabled(isUploadingBackup)
-            Button("取消", role: .cancel) {
-                pendingUploadChannel = nil
-            }
-        } message: { channel in
-            Text("将用本机当前的提醒记录和模板数据覆盖\(channel.rawValue)现有备份。是否继续？")
+            Button("取消", role: .cancel) {}
+        } message: {
+            Text("将用本机当前的提醒记录和模板数据覆盖服务器上的现有备份。是否继续？")
         }
         .confirmationDialog(
             "用远程备份替换本机数据？",
@@ -412,35 +402,26 @@ struct PhoneContentView: View {
 
     private var remoteImportForm: some View {
         Form {
-            Section("同步通道") {
-                Picker("通道", selection: $channel) {
-                    ForEach(BackupChannel.allCases) { c in
-                        Label(c.rawValue, systemImage: c.icon).tag(c)
-                    }
-                }
-                .pickerStyle(.segmented)
-
-                Text(channel.summary)
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-            }
-
             Section("备份地址") {
-                Text(channel.backupURLString)
+                Text(BuildManagerBackupUploader.backupURLString)
                     .font(.footnote.monospaced())
                     .textSelection(.enabled)
 
                 Button {
-                    UIPasteboard.general.string = channel.backupURLString
+                    UIPasteboard.general.string = BuildManagerBackupUploader.backupURLString
                     message = "已复制备份地址，可发给另一台设备导入。"
                 } label: {
                     Label("复制地址", systemImage: "doc.on.doc")
                 }
+
+                Text("走公网 HTTPS，任何网络都能存取；服务器上只保留最新一份备份。")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
             }
 
             Section("上传") {
                 Button {
-                    pendingUploadChannel = channel
+                    showUploadConfirmation = true
                 } label: {
                     HStack {
                         Spacer()
@@ -454,9 +435,7 @@ struct PhoneContentView: View {
                 }
                 .disabled(isUploadingBackup)
 
-                Text(lastUploadText(channel == .lan
-                                    ? lastSuccessfulUploadTimestamp
-                                    : lastSuccessfulBuildManagerUploadTimestamp))
+                Text(lastUploadText(lastSuccessfulBuildManagerUploadTimestamp))
                     .font(.footnote)
                     .foregroundStyle(.secondary)
 
@@ -479,7 +458,7 @@ struct PhoneContentView: View {
                     .foregroundStyle(remoteImportMode == .replace ? Color.orange : Color.secondary)
 
                 Button {
-                    startRemoteImport(from: channel.backupURLString)
+                    startRemoteImport(from: BuildManagerBackupUploader.backupURLString)
                 } label: {
                     HStack {
                         Spacer()
@@ -493,13 +472,13 @@ struct PhoneContentView: View {
                 }
                 .disabled(isImportingRemoteBackup)
 
-                Text(channel.reachabilityHint)
+                Text("任何网络均可下载")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
             }
 
             Section {
-                Text("手机上的修改不会自动同步；两条通道都只保留最新一份备份。")
+                Text("改动会自动同步；服务器只保留最新一份备份。")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
             }
@@ -550,27 +529,18 @@ struct PhoneContentView: View {
     }
 
     @MainActor
-    private func uploadCurrentBackup(to channel: BackupChannel) async {
+    private func uploadCurrentBackup() async {
         guard !isUploadingBackup else { return }
         isUploadingBackup = true
         defer { isUploadingBackup = false }
 
         do {
             let data = try CropStore.exportBackupJSON()
-            let fileName: String
-            switch channel {
-            case .lan: fileName = try await SourceFileUploader.uploadBackup(data: data).fileName
-            case .wan: fileName = try await BuildManagerBackupUploader.uploadBackup(data: data).fileName
-            }
-            let now = Date().timeIntervalSince1970
-            if channel == .lan {
-                lastSuccessfulUploadTimestamp = now
-            } else {
-                lastSuccessfulBuildManagerUploadTimestamp = now
-            }
-            message = "已上传到\(channel.rawValue)：\(fileName)，备份地址已指向这份最新内容。"
+            let fileName = try await BuildManagerBackupUploader.uploadBackup(data: data).fileName
+            lastSuccessfulBuildManagerUploadTimestamp = Date().timeIntervalSince1970
+            message = "已上传：\(fileName)，备份地址已指向这份最新内容。"
         } catch {
-            message = "\(channel.rawValue)上传失败：\(error.localizedDescription)"
+            message = "上传失败：\(error.localizedDescription)"
         }
     }
 

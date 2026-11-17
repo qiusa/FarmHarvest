@@ -35,11 +35,8 @@ struct CropManagerSheet: View {
     @State private var toast: String?
     @State private var toastIsError: Bool = false
     @State private var importMode: CropStore.ImportMode = .merge
-    @State private var channel: BackupChannel = .lan
     @State private var isImportingRemoteBackup = false
     @State private var isUploadingBackup = false
-    @AppStorage(CropStore.lastSuccessfulUploadTimestampKey)
-    private var lastSuccessfulUploadTimestamp: Double = 0
     @AppStorage(CropStore.lastSuccessfulBuildManagerUploadTimestampKey)
     private var lastSuccessfulBuildManagerUploadTimestamp: Double = 0
     @State private var showRemoteReplaceConfirmation = false
@@ -363,15 +360,7 @@ struct CropManagerSheet: View {
             VStack(alignment: .leading, spacing: 16) {
                 GlassPanel {
                     VStack(alignment: .leading, spacing: 16) {
-                        Picker("同步通道", selection: $channel) {
-                            ForEach(BackupChannel.allCases) { c in
-                                Label(c.rawValue, systemImage: c.icon).tag(c)
-                            }
-                        }
-                        .pickerStyle(.segmented)
-                        .labelsHidden()
-
-                        Text(channel.summary)
+                        Text("走公网 HTTPS，任何网络都能存取；服务器上只保留最新一份备份。")
                             .font(.caption).foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
 
@@ -422,19 +411,19 @@ struct CropManagerSheet: View {
         .scrollIndicators(.hidden)
     }
 
-    /// 当前通道的固定备份地址 + 复制按钮（两台设备互传时最需要的是这个地址）
+    /// 固定备份地址 + 复制按钮（两台设备互传时最需要的是这个地址）
     private var backupAddressRow: some View {
         HStack(alignment: .firstTextBaseline, spacing: 10) {
             Text("备份地址")
                 .font(.caption).foregroundStyle(.secondary)
-            Text(channel.backupURLString)
+            Text(BuildManagerBackupUploader.backupURLString)
                 .font(.caption.monospaced())
                 .textSelection(.enabled)
                 .lineLimit(1)
                 .truncationMode(.middle)
             Button {
                 NSPasteboard.general.clearContents()
-                NSPasteboard.general.setString(channel.backupURLString, forType: .string)
+                NSPasteboard.general.setString(BuildManagerBackupUploader.backupURLString, forType: .string)
                 show("已复制备份地址，可发给另一台设备导入。")
             } label: {
                 Image(systemName: "doc.on.doc")
@@ -446,10 +435,7 @@ struct CropManagerSheet: View {
     }
 
     private var uploadRow: some View {
-        let lastUpload = channel == .lan
-            ? lastSuccessfulUploadTimestamp
-            : lastSuccessfulBuildManagerUploadTimestamp
-        return HStack(alignment: .top, spacing: 12) {
+        HStack(alignment: .top, spacing: 12) {
             Image(systemName: "arrow.up.doc")
                 .foregroundStyle(.secondary)
                 .frame(width: 22)
@@ -463,7 +449,7 @@ struct CropManagerSheet: View {
             Spacer(minLength: 12)
             VStack(alignment: .trailing, spacing: 5) {
                 Button {
-                    Task { await uploadCurrentBackup(to: channel) }
+                    Task { await uploadCurrentBackup() }
                 } label: {
                     Group {
                         if isUploadingBackup {
@@ -477,7 +463,7 @@ struct CropManagerSheet: View {
                 .buttonStyle(.borderedProminent)
                 .disabled(isUploadingBackup)
 
-                Text(lastUploadText(lastUpload))
+                Text(lastUploadText(lastSuccessfulBuildManagerUploadTimestamp))
                     .font(.caption2).foregroundStyle(.tertiary)
             }
         }
@@ -496,7 +482,7 @@ struct CropManagerSheet: View {
             Spacer(minLength: 12)
             VStack(alignment: .trailing, spacing: 5) {
                 Button {
-                    startRemoteImport(from: channel.backupURLString)
+                    startRemoteImport(from: BuildManagerBackupUploader.backupURLString)
                 } label: {
                     Group {
                         if isImportingRemoteBackup {
@@ -510,7 +496,7 @@ struct CropManagerSheet: View {
                 .buttonStyle(.bordered)
                 .disabled(isImportingRemoteBackup)
 
-                Text(channel.reachabilityHint)
+                Text("任何网络均可下载")
                     .font(.caption2).foregroundStyle(.tertiary)
             }
         }
@@ -678,26 +664,17 @@ struct CropManagerSheet: View {
     }
 
     @MainActor
-    private func uploadCurrentBackup(to channel: BackupChannel) async {
+    private func uploadCurrentBackup() async {
         isUploadingBackup = true
         defer { isUploadingBackup = false }
 
         do {
             let data = try CropStore.exportBackupJSON()
-            let fileName: String
-            switch channel {
-            case .lan: fileName = try await SourceFileUploader.uploadBackup(data: data).fileName
-            case .wan: fileName = try await BuildManagerBackupUploader.uploadBackup(data: data).fileName
-            }
-            let now = Date().timeIntervalSince1970
-            if channel == .lan {
-                lastSuccessfulUploadTimestamp = now
-            } else {
-                lastSuccessfulBuildManagerUploadTimestamp = now
-            }
-            show("已上传到\(channel.rawValue)：\(fileName)，备份地址已指向这份最新内容。")
+            let fileName = try await BuildManagerBackupUploader.uploadBackup(data: data).fileName
+            lastSuccessfulBuildManagerUploadTimestamp = Date().timeIntervalSince1970
+            show("已上传：\(fileName)，备份地址已指向这份最新内容。")
         } catch {
-            show("\(channel.rawValue)上传失败：\(error.localizedDescription)", isError: true)
+            show("上传失败：\(error.localizedDescription)", isError: true)
         }
     }
 

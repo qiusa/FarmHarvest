@@ -4,18 +4,5 @@
 <dict>
 	<key>CFBundleName</key>
 	<string>事项提醒</string>
-	<key>NSAppTransportSecurity</key>
-	<dict>
-		<key>NSExceptionDomains</key>
-		<dict>
-			<key>192.168.200.94</key>
-			<dict>
-				<key>NSExceptionAllowsInsecureHTTPLoads</key>
-				<true/>
-			</dict>
-		</dict>
-	</dict>
-	<key>NSLocalNetworkUsageDescription</key>
-	<string>连接可信局域网中的共享目录，上传和下载事项数据备份。</string>
 </dict>
 </plist>
