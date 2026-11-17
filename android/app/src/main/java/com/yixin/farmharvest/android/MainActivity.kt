@@ -582,13 +582,13 @@ private fun PlantForm(
     val scroll = rememberScrollState()
     Column(
         modifier = modifier.fillMaxSize().imePadding().verticalScroll(scroll)
-            .padding(horizontal = 16.dp, vertical = 12.dp),
-        verticalArrangement = Arrangement.spacedBy(14.dp),
+            .padding(horizontal = 16.dp, vertical = 8.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
         Card(colors = CardDefaults.cardColors(containerColor = Color.White)) {
             Column(
-                Modifier.fillMaxWidth().padding(16.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp),
+                Modifier.fillMaxWidth().padding(14.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 SectionHeading("模板")
                 if (activity.presets.isEmpty()) {
@@ -633,8 +633,8 @@ private fun PlantForm(
 
         Card(colors = CardDefaults.cardColors(containerColor = Color.White)) {
             Column(
-                Modifier.fillMaxWidth().padding(16.dp),
-                verticalArrangement = Arrangement.spacedBy(10.dp),
+                Modifier.fillMaxWidth().padding(14.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 SectionHeading("提醒间隔")
                 OutlinedTextField(
@@ -660,8 +660,8 @@ private fun PlantForm(
 
         Card(colors = CardDefaults.cardColors(containerColor = Color.White)) {
             Column(
-                Modifier.fillMaxWidth().padding(16.dp),
-                verticalArrangement = Arrangement.spacedBy(10.dp),
+                Modifier.fillMaxWidth().padding(14.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 SectionHeading("备注（可选）")
                 OutlinedTextField(
@@ -692,11 +692,10 @@ private fun PlantForm(
                 )
             },
             enabled = selected != null && minutes != null,
-            modifier = Modifier.fillMaxWidth().height(52.dp),
+            modifier = Modifier.fillMaxWidth().height(48.dp),
         ) {
             Text("添加提醒", fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
         }
-        Spacer(Modifier.height(10.dp))
     }
 }
 
@@ -733,11 +732,11 @@ private fun RecordsScreen(
     LazyColumn(
         modifier = modifier.fillMaxSize().padding(horizontal = 14.dp),
         state = lazyListState,
-        verticalArrangement = Arrangement.spacedBy(10.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         item {
             Row(
-                Modifier.fillMaxWidth().padding(top = 8.dp),
+                Modifier.fillMaxWidth().padding(top = 6.dp),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 StatCard("待提醒", records.size - readyCount, Color(0xFFEF8E2F), Modifier.weight(1f))
@@ -747,7 +746,7 @@ private fun RecordsScreen(
         }
         item {
             Row(
-                Modifier.fillMaxWidth().padding(top = 4.dp, bottom = 2.dp),
+                Modifier.fillMaxWidth().padding(top = 2.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Text(
@@ -769,9 +768,9 @@ private fun RecordsScreen(
             item {
                 Card(colors = CardDefaults.cardColors(containerColor = Color.White)) {
                     Column(
-                        Modifier.fillMaxWidth().padding(26.dp),
+                        Modifier.fillMaxWidth().padding(20.dp),
                         horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalArrangement = Arrangement.spacedBy(6.dp),
                     ) {
                         Text("◷", fontSize = 30.sp, color = farmGreen)
                         Text("还没有提醒记录", fontWeight = FontWeight.SemiBold)
@@ -798,7 +797,6 @@ private fun RecordsScreen(
                 }
             }
         }
-        item { Spacer(Modifier.height(10.dp)) }
     }
 }
 
@@ -810,11 +808,11 @@ private fun StatCard(title: String, value: Int, tint: Color, modifier: Modifier 
         shape = RoundedCornerShape(14.dp),
     ) {
         Column(
-            Modifier.fillMaxWidth().padding(vertical = 10.dp),
+            Modifier.fillMaxWidth().padding(vertical = 8.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(2.dp),
         ) {
-            Text(value.toString(), color = tint, fontSize = 22.sp, fontWeight = FontWeight.Bold)
+            Text(value.toString(), color = tint, fontSize = 20.sp, fontWeight = FontWeight.Bold)
             Text(title, color = Color.Gray, style = MaterialTheme.typography.labelSmall)
         }
     }
@@ -836,12 +834,12 @@ private fun RecordCard(
         shape = RoundedCornerShape(18.dp),
     ) {
         Column(
-            Modifier.fillMaxWidth().padding(14.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp),
+            Modifier.fillMaxWidth().padding(12.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp),
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Box(
-                    Modifier.size(38.dp).background(parseHex(record.colorHex), CircleShape),
+                    Modifier.size(34.dp).background(parseHex(record.colorHex), CircleShape),
                     contentAlignment = Alignment.Center,
                 ) {
                     Text(
@@ -850,7 +848,7 @@ private fun RecordCard(
                         fontWeight = FontWeight.Bold,
                     )
                 }
-                Spacer(Modifier.width(10.dp))
+                Spacer(Modifier.width(8.dp))
                 Text(
                     record.name,
                     modifier = Modifier.weight(1f),
@@ -865,7 +863,7 @@ private fun RecordCard(
                     color = Color(0xFFF4F7F3),
                     shape = RoundedCornerShape(10.dp),
                 ) {
-                    Text(note, Modifier.fillMaxWidth().padding(10.dp), style = MaterialTheme.typography.bodySmall)
+                    Text(note, Modifier.fillMaxWidth().padding(8.dp), style = MaterialTheme.typography.bodySmall)
                 }
             }
             record.harvests.sortedBy { it.date }.forEachIndexed { index, cycle ->
@@ -936,16 +934,16 @@ private fun DataScreen(
     val context = LocalContext.current
     Column(
         modifier.fillMaxSize().verticalScroll(rememberScrollState())
-            .padding(horizontal = 16.dp, vertical = 12.dp),
-        verticalArrangement = Arrangement.spacedBy(14.dp),
+            .padding(horizontal = 16.dp, vertical = 8.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
         val notificationsEnabled = NotificationManagerCompat.from(context).areNotificationsEnabled()
         val exactAlarmsEnabled = Build.VERSION.SDK_INT < Build.VERSION_CODES.S ||
             (context.getSystemService(AlarmManager::class.java)?.canScheduleExactAlarms() == true)
         Card(colors = CardDefaults.cardColors(containerColor = Color.White)) {
             Column(
-                Modifier.fillMaxWidth().padding(16.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp),
+                Modifier.fillMaxWidth().padding(14.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp),
             ) {
                 SectionHeading("提醒权限")
                 Text(
@@ -991,8 +989,8 @@ private fun DataScreen(
 
         Card(colors = CardDefaults.cardColors(containerColor = Color.White)) {
             Column(
-                Modifier.fillMaxWidth().padding(16.dp),
-                verticalArrangement = Arrangement.spacedBy(10.dp),
+                Modifier.fillMaxWidth().padding(14.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 val uploadTimestamp = activity.lastPublicUploadTimestamp
                 val uploadTime = if (uploadTimestamp > 0) formatUploadTime(uploadTimestamp) else "尚未上传"
@@ -1092,7 +1090,6 @@ private fun DataScreen(
                 )
             }
         }
-        Spacer(Modifier.height(8.dp))
     }
 }
 
