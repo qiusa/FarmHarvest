@@ -61,7 +61,13 @@ enum AutoSync {
                 records.append(local)
             }
         }
-        records.sort { $0.plantedAt > $1.plantedAt }
+        // 手动排序序号优先（升序，越小越靠上）；同值时按创建时间倒序兜底，
+        // 兼容没有 sortIndex 的历史数据。脏记录用本地序号、未脏用服务器序号，
+        // 因此本机拖动后的顺序会随备份同步到其它设备。
+        records.sort {
+            if $0.sortIndex != $1.sortIndex { return $0.sortIndex < $1.sortIndex }
+            return $0.plantedAt > $1.plantedAt
+        }
 
         var merged = base
         merged.records = records

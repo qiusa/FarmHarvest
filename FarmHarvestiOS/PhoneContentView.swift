@@ -304,6 +304,12 @@ struct PhoneContentView: View {
                     }
                     .listRowInsets(EdgeInsets(top: 7, leading: 16, bottom: 7, trailing: 16))
                 }
+                .onMove { source, destination in
+                    var reordered = records
+                    reordered.move(fromOffsets: source, toOffset: destination)
+                    CropStore.reorder(reordered)
+                    refresh()
+                }
                 }
             }
         }

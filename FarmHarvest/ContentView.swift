@@ -930,6 +930,19 @@ struct ContentView: View {
                                 onEdit: { editTarget = r },
                                 onDelete: { delete(r) }
                             )
+                            .draggable(r.id)
+                            .dropDestination(for: String.self) { items, _ in
+                                guard let draggedID = items.first,
+                                      let from = records.firstIndex(where: { $0.id == draggedID }),
+                                      let to = records.firstIndex(where: { $0.id == r.id }),
+                                      from != to else { return false }
+                                var reordered = records
+                                let moved = reordered.remove(at: from)
+                                reordered.insert(moved, at: to)
+                                CropStore.reorder(reordered)
+                                records = CropStore.load()
+                                return true
+                            }
                         }
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)

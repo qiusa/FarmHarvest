@@ -34,6 +34,9 @@ struct CropRecord: Identifiable, Codable, Equatable {
     var harvests: [HarvestCycle] = []
     /// 新建事项备注说明（可选，可在编辑弹窗修改；旧数据无此字段时解码为 nil）
     var note: String?
+    /// 手动排序序号：升序排列，越小越靠上。随备份跨设备同步。
+    /// 旧数据无此字段时解码为 0，全部同值时按 plantedAt 倒序兜底（与历史行为一致）。
+    var sortIndex: Int = 0
 
     /// 全部提醒时间，升序
     var allHarvests: [Date] { harvests.map(\.date).sorted() }
@@ -64,7 +67,7 @@ struct CropRecord: Identifiable, Codable, Equatable {
     }
 
     enum CodingKeys: String, CodingKey {
-        case id, name, colorHex, minutes, plantedAt, harvests, note
+        case id, name, colorHex, minutes, plantedAt, harvests, note, sortIndex
         // 旧字段：仅用于解码迁移，不再写入
         case harvestAt, extraHarvests
     }
@@ -81,6 +84,7 @@ struct CropRecord: Identifiable, Codable, Equatable {
         minutes = try c.decode(Int.self, forKey: .minutes)
         plantedAt = try c.decode(Date.self, forKey: .plantedAt)
         note = try c.decodeIfPresent(String.self, forKey: .note)
+        sortIndex = try c.decodeIfPresent(Int.self, forKey: .sortIndex) ?? 0
 
         if let v = try c.decodeIfPresent([HarvestCycle].self, forKey: .harvests) {
             harvests = v
@@ -104,17 +108,19 @@ struct CropRecord: Identifiable, Codable, Equatable {
         try c.encode(plantedAt, forKey: .plantedAt)
         try c.encode(harvests, forKey: .harvests)
         try c.encodeIfPresent(note, forKey: .note)
+        try c.encode(sortIndex, forKey: .sortIndex)
     }
 
     /// 显式成员初始化器：写了 init(from:) 后 Swift 不再合成它，构造点全靠这个
     init(id: String, name: String, colorHex: String, minutes: Int,
          plantedAt: Date, harvests: [HarvestCycle]? = nil,
-         extraHarvests: [Date] = [], note: String? = nil) {
+         extraHarvests: [Date] = [], note: String? = nil, sortIndex: Int = 0) {
         self.id = id
         self.name = name
         self.colorHex = colorHex
         self.minutes = minutes
         self.plantedAt = plantedAt
+        self.sortIndex = sortIndex
         if let h = harvests {
             self.harvests = h
         } else {
@@ -560,7 +566,8 @@ enum CropStore {
             minutes: minutes,
             plantedAt: now,
             harvests: [HarvestCycle(date: now.addingTimeInterval(TimeInterval(minutes * 60)))],
-            note: note
+            note: note,
+            sortIndex: (records.map(\.sortIndex).min() ?? 0) - 1
         )
         records.insert(rec, at: 0)
         save(records)
@@ -577,19 +584,31 @@ enum CropStore {
             minutes: max(0, Int(harvestAt.timeIntervalSince(now) / 60)),
             plantedAt: now,
             harvests: [HarvestCycle(date: harvestAt)],
-            note: note
+            note: note,
+            sortIndex: (records.map(\.sortIndex).min() ?? 0) - 1
         )
         records.insert(rec, at: 0)
         save(records)
     }
 
-    /// 编辑已有记录（按 id 替换）-> 对应提醒时间变更
+    /// 编辑已有记录（按 id 替换）-> 对应提醒时间变更。
+    /// 编辑只改内容不改顺序：保留原 sortIndex，避免编辑弹窗新建的记录把排序重置成 0。
     static func update(_ updated: CropRecord) {
         var list = load()
         if let i = list.firstIndex(where: { $0.id == updated.id }) {
-            list[i] = updated
+            var merged = updated
+            merged.sortIndex = list[i].sortIndex
+            list[i] = merged
             save(list)
         }
+    }
+
+    /// 手动拖动排序：按传入顺序重编号 sortIndex 后保存。
+    /// 只有位置真正变化的记录内容才会变，从而只把这些记录标脏上传。
+    static func reorder(_ ordered: [CropRecord]) {
+        var list = ordered
+        for i in list.indices { list[i].sortIndex = i }
+        save(list)
     }
 
     /// 续期：在已有记录后追加一次提醒（新菜重复种，不必新建记录）
