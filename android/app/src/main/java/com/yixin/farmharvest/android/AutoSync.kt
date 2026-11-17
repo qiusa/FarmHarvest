@@ -13,7 +13,10 @@ fun mergeBackup(base: SyncBackup, local: SyncBackup, changes: SyncChangeState): 
         merged.removeAll { it.id == id }
         localById[id]?.let { merged.add(it) }
     }
-    merged.sortByDescending { it.plantedAt }
+    // 手动排序序号优先（升序，越小越靠上）；同值时按创建时间倒序兜底，
+    // 兼容没有 sortIndex 的历史数据。脏记录用本地序号、未脏用服务器序号，
+    // 因此本机拖动后的顺序会随备份同步到其它设备。
+    merged.sortWith(compareBy<CropRecord> { it.sortIndex }.thenByDescending { it.plantedAt })
     return SyncBackup(
         exportedAt = base.exportedAt,
         records = merged,

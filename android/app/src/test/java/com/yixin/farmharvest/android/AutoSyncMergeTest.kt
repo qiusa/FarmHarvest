@@ -13,6 +13,7 @@ class AutoSyncMergeTest {
         plantedAt: Long = 1_000L,
         note: String? = null,
         minutes: Int = 30,
+        sortIndex: Int = 0,
     ) = CropRecord(
         id = id,
         name = name,
@@ -21,6 +22,7 @@ class AutoSyncMergeTest {
         plantedAt = plantedAt,
         harvests = listOf(HarvestCycle(id = "$id-c1", date = plantedAt + 60_000L)),
         note = note,
+        sortIndex = sortIndex,
     )
 
     private fun preset(id: String, name: String = id) =
@@ -103,11 +105,34 @@ class AutoSyncMergeTest {
     }
 
     @Test
-    fun mergedRecordsSortByPlantedAtDescending() {
+    fun mergedRecordsWithEqualSortIndexFallBackToPlantedAtDescending() {
         val base = backup(listOf(record("old", plantedAt = 10), record("new", plantedAt = 90)))
         val local = backup(listOf(record("mid", plantedAt = 50)))
         val merged = mergeBackup(base, local, SyncChangeState(dirtyRecordIDs = setOf("mid")))
         assertEquals(listOf("new", "mid", "old"), merged.records.map { it.id })
+    }
+
+    @Test
+    fun mergedRecordsSortBySortIndexAscending() {
+        // 手动序号优先于创建时间：plantedAt 最新的 "new" 反而排最后
+        val base = backup(
+            listOf(
+                record("new", plantedAt = 90, sortIndex = 2),
+                record("old", plantedAt = 10, sortIndex = 0),
+            ),
+        )
+        val local = backup(listOf(record("mid", plantedAt = 50, sortIndex = 1)))
+        val merged = mergeBackup(base, local, SyncChangeState(dirtyRecordIDs = setOf("mid")))
+        assertEquals(listOf("old", "mid", "new"), merged.records.map { it.id })
+    }
+
+    @Test
+    fun reorderMarksOnlyPositionChangedRecordsDirty() {
+        val old = listOf(record("a", sortIndex = 0), record("b", sortIndex = 1), record("c", sortIndex = 2))
+        // 交换 a、b -> b=0, a=1, c=2；c 序号没变不标脏
+        val reordered = listOf(old[1], old[0], old[2]).mapIndexed { i, r -> r.copy(sortIndex = i) }
+        val next = trackedRecordSave(SyncChangeState(revision = 1), old, reordered)!!
+        assertEquals(setOf("a", "b"), next.dirtyRecordIDs)
     }
 
     @Test

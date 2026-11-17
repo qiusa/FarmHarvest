@@ -25,6 +25,9 @@ data class CropRecord(
     val plantedAt: Long,
     val harvests: List<HarvestCycle>,
     val note: String? = null,
+    // 手动排序序号：升序，越小越靠上，随备份跨设备同步。
+    // 旧 JSON 无此字段时默认 0，同值时按 plantedAt 倒序兜底（与历史行为一致）。
+    val sortIndex: Int = 0,
 )
 
 data class CropPreset(
@@ -199,6 +202,7 @@ object FarmStore {
         note: String?,
         now: Long = System.currentTimeMillis(),
     ): CropRecord {
+        val existing = loadRecords(context)
         val record = CropRecord(
             name = preset.name,
             colorHex = preset.colorHex,
@@ -206,9 +210,16 @@ object FarmStore {
             plantedAt = now,
             harvests = listOf(HarvestCycle(date = now + minutes.coerceAtLeast(1) * 60_000L)),
             note = note?.trim()?.takeIf(String::isNotEmpty),
+            sortIndex = (existing.minOfOrNull { it.sortIndex } ?: 0) - 1,
         )
-        saveRecords(context, listOf(record) + loadRecords(context))
+        saveRecords(context, listOf(record) + existing)
         return record
+    }
+
+    /// 手动拖动排序：按传入顺序重编号 sortIndex 后保存。
+    /// 只有位置真正变化的记录内容才会变，从而只把这些记录标脏上传。
+    fun reorderRecords(context: Context, ordered: List<CropRecord>) {
+        saveRecords(context, ordered.mapIndexed { index, record -> record.copy(sortIndex = index) })
     }
 
     fun addCustomCrop(context: Context, name: String, minutes: Int): CropPreset {
@@ -480,6 +491,7 @@ object FarmStore {
             plantedAt = parseDate(json.get("plantedAt")),
             harvests = cycles,
             note = json.optString("note").takeIf { it.isNotBlank() && it != "null" },
+            sortIndex = json.optInt("sortIndex", 0),
         )
     }
 
@@ -511,6 +523,7 @@ object FarmStore {
                     .put("colorHex", record.colorHex)
                     .put("minutes", record.minutes)
                     .put("plantedAt", isoDate(record.plantedAt))
+                    .put("sortIndex", record.sortIndex)
                     .put("harvests", JSONArray().apply {
                         record.harvests.forEach { cycle ->
                             put(

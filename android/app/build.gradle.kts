@@ -90,6 +90,8 @@ dependencies {
     implementation("androidx.compose.ui:ui-tooling-preview")
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.6")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
+    // 记录列表长按拖动排序；2.4.x 对应 compose 1.7（BOM 2024.09.03）
+    implementation("sh.calvin.reorderable:reorderable:2.4.3")
 
     debugImplementation("androidx.compose.ui:ui-tooling")
     testImplementation("junit:junit:4.13.2")

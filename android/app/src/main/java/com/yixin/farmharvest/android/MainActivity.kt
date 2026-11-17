@@ -31,6 +31,9 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
+import sh.calvin.reorderable.ReorderableItem
+import sh.calvin.reorderable.rememberReorderableLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -403,6 +406,10 @@ private fun FarmHarvestApp(activity: MainActivity) {
                     activity.reload()
                     message("已为「${it.name}」添加下一次提醒。")
                 },
+                onReorder = { reordered ->
+                    FarmStore.reorderRecords(activity, reordered)
+                    activity.reload()
+                },
             )
             else -> DataScreen(
                 activity = activity,
@@ -702,13 +709,30 @@ private fun RecordsScreen(
     onDelete: (CropRecord) -> Unit,
     onToggleHarvest: (CropRecord, HarvestCycle) -> Unit,
     onRenew: (CropRecord) -> Unit,
+    onReorder: (List<CropRecord>) -> Unit,
 ) {
     val readyCount = records.count { record ->
         record.harvests.isNotEmpty() &&
             record.harvests.all { it.harvested || it.date <= now }
     }
+    val lazyListState = rememberLazyListState()
+    // 用记录 id（item key）定位而非 LazyColumn 下标：列表头部有统计/标题两个 item，
+    // 按下标换算容易错位；key 为 null 的头部项直接忽略。
+    val reorderableState = rememberReorderableLazyListState(lazyListState) { from, to ->
+        val fromId = from.key as? String ?: return@rememberReorderableLazyListState
+        val toId = to.key as? String ?: return@rememberReorderableLazyListState
+        val reordered = records.toMutableList()
+        val fromIndex = reordered.indexOfFirst { it.id == fromId }
+        val toIndex = reordered.indexOfFirst { it.id == toId }
+        if (fromIndex < 0 || toIndex < 0 || fromIndex == toIndex) {
+            return@rememberReorderableLazyListState
+        }
+        reordered.add(toIndex, reordered.removeAt(fromIndex))
+        onReorder(reordered)
+    }
     LazyColumn(
         modifier = modifier.fillMaxSize().padding(horizontal = 14.dp),
+        state = lazyListState,
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
         item {
@@ -722,12 +746,24 @@ private fun RecordsScreen(
             }
         }
         item {
-            Text(
-                "提醒记录（${records.size}）",
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.SemiBold,
-                modifier = Modifier.padding(top = 4.dp, bottom = 2.dp),
-            )
+            Row(
+                Modifier.fillMaxWidth().padding(top = 4.dp, bottom = 2.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    "提醒记录（${records.size}）",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier.weight(1f),
+                )
+                if (records.size > 1) {
+                    Text(
+                        "长按拖动排序",
+                        color = Color.Gray,
+                        style = MaterialTheme.typography.labelSmall,
+                    )
+                }
+            }
         }
         if (records.isEmpty()) {
             item {
@@ -749,14 +785,17 @@ private fun RecordsScreen(
             }
         } else {
             itemsIndexed(records, key = { _, record -> record.id }) { _, record ->
-                RecordCard(
-                    record = record,
-                    now = now,
-                    onEdit = { onEdit(record) },
-                    onDelete = { onDelete(record) },
-                    onToggleHarvest = { onToggleHarvest(record, it) },
-                    onRenew = { onRenew(record) },
-                )
+                ReorderableItem(reorderableState, key = record.id) { _ ->
+                    RecordCard(
+                        record = record,
+                        now = now,
+                        modifier = Modifier.longPressDraggableHandle(),
+                        onEdit = { onEdit(record) },
+                        onDelete = { onDelete(record) },
+                        onToggleHarvest = { onToggleHarvest(record, it) },
+                        onRenew = { onRenew(record) },
+                    )
+                }
             }
         }
         item { Spacer(Modifier.height(10.dp)) }
@@ -785,12 +824,14 @@ private fun StatCard(title: String, value: Int, tint: Color, modifier: Modifier 
 private fun RecordCard(
     record: CropRecord,
     now: Long,
+    modifier: Modifier = Modifier,
     onEdit: () -> Unit,
     onDelete: () -> Unit,
     onToggleHarvest: (HarvestCycle) -> Unit,
     onRenew: () -> Unit,
 ) {
     Card(
+        modifier = modifier,
         colors = CardDefaults.cardColors(containerColor = Color.White),
         shape = RoundedCornerShape(18.dp),
     ) {
