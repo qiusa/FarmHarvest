@@ -315,13 +315,13 @@ private fun FarmHarvestApp(activity: MainActivity) {
         isUploading = true
         scope.launch {
             try {
-                val result = withContext(Dispatchers.IO) {
+                withContext(Dispatchers.IO) {
                     BackupApi.uploadBackup(FarmStore.exportBackup(activity))
                 }
                 val timestamp = System.currentTimeMillis()
                 FarmStore.setLastUploadTimestamp(activity, timestamp)
                 activity.lastPublicUploadTimestamp = timestamp
-                message("已上传：${result.fileName}，可从备份地址导入最新内容。")
+                message("上传成功，服务器备份已更新。")
             } catch (error: Exception) {
                 message("上传失败：${error.message ?: "请检查网络后重试"}")
             } finally {
@@ -435,7 +435,7 @@ private fun FarmHarvestApp(activity: MainActivity) {
                     clipboard?.setPrimaryClip(
                         ClipData.newPlainText("FarmHarvest backup URL", FarmStore.BUILD_MANAGER_BACKUP_URL),
                     )
-                    message("已复制备份地址，可发给另一台设备导入。")
+                    message("已复制备份地址。")
                 },
             )
         }
@@ -994,28 +994,15 @@ private fun DataScreen(
                 Modifier.fillMaxWidth().padding(16.dp),
                 verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
-                SectionHeading("备份地址")
-                Text(
-                    "走公网 HTTPS，任何网络都能存取；服务器上只保留最新一份备份。",
-                    color = Color.Gray,
-                    style = MaterialTheme.typography.bodySmall,
-                )
-                Text(
-                    FarmStore.BUILD_MANAGER_BACKUP_URL,
-                    color = Color(0xFF4F5D50),
-                    style = MaterialTheme.typography.bodySmall,
-                )
-                OutlinedButton(onClick = onCopyAddress, modifier = Modifier.fillMaxWidth()) {
-                    Text("复制备份地址")
-                }
+                val uploadTimestamp = activity.lastPublicUploadTimestamp
+                val uploadTime = if (uploadTimestamp > 0) formatUploadTime(uploadTimestamp) else "尚未上传"
 
-                HorizontalDivider(color = Color(0xFFF0F0F0))
-                SectionHeading("上传")
-                Text(
-                    "把本机当前数据推到备份地址，覆盖服务器上的那一份。",
-                    color = Color.Gray,
-                    style = MaterialTheme.typography.bodySmall,
-                )
+                SectionHeading("云备份")
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Text("最近上传", color = Color.Gray, style = MaterialTheme.typography.bodySmall)
+                    Spacer(Modifier.weight(1f))
+                    Text(uploadTime, color = Color(0xFF4F5D50), style = MaterialTheme.typography.bodySmall)
+                }
                 Button(
                     onClick = onUpload,
                     enabled = !isUploading,
@@ -1029,9 +1016,23 @@ private fun DataScreen(
                         Text("↑  上传当前备份")
                     }
                 }
-                val uploadTimestamp = activity.lastPublicUploadTimestamp
-                val uploadTime = if (uploadTimestamp > 0) formatUploadTime(uploadTimestamp) else "尚未上传"
-                Text("最近上传：$uploadTime", color = Color.Gray, style = MaterialTheme.typography.bodySmall)
+                Text(
+                    "改动会自动同步；服务器只保留最新一份备份，任何网络均可存取。",
+                    color = Color.Gray,
+                    style = MaterialTheme.typography.bodySmall,
+                )
+
+                HorizontalDivider(color = Color(0xFFF0F0F0))
+                SectionHeading("备份地址")
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        FarmStore.BUILD_MANAGER_BACKUP_URL,
+                        color = Color(0xFF4F5D50),
+                        style = MaterialTheme.typography.bodySmall,
+                        modifier = Modifier.weight(1f),
+                    )
+                    TextButton(onClick = onCopyAddress) { Text("复制") }
+                }
 
                 HorizontalDivider(color = Color(0xFFF0F0F0))
                 SectionHeading("下载并导入")
@@ -1069,25 +1070,26 @@ private fun DataScreen(
                         Text("↓  下载并导入")
                     }
                 }
-                Text("任何网络均可下载", color = Color.Gray, style = MaterialTheme.typography.bodySmall)
 
                 HorizontalDivider(color = Color(0xFFF0F0F0))
                 SectionHeading("本地文件")
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedButton(onClick = onLocalExport, modifier = Modifier.weight(1f)) {
+                        Text("导出到文件")
+                    }
+                    OutlinedButton(
+                        onClick = onLocalImport,
+                        enabled = !isImporting,
+                        modifier = Modifier.weight(1f),
+                    ) {
+                        Text("从文件导入")
+                    }
+                }
                 Text(
-                    "导出 JSON 文件归档，或从已有备份文件导入；导入方式沿用上方的合并/替换设置。",
+                    "导入沿用上方合并/替换设置。",
                     color = Color.Gray,
                     style = MaterialTheme.typography.bodySmall,
                 )
-                OutlinedButton(onClick = onLocalExport, modifier = Modifier.fillMaxWidth()) {
-                    Text("导出备份到文件…")
-                }
-                OutlinedButton(
-                    onClick = onLocalImport,
-                    enabled = !isImporting,
-                    modifier = Modifier.fillMaxWidth(),
-                ) {
-                    Text("从文件导入备份…")
-                }
             }
         }
         Spacer(Modifier.height(8.dp))
