@@ -1296,23 +1296,13 @@ private final class PhoneCropNotifier: NSObject, UNUserNotificationCenterDelegat
                 let suffix = allCycles.count > 1 ? "（第 \(position)/\(allCycles.count) 次）" : ""
                 let timestamp = Int(cycle.date.timeIntervalSince1970)
 
-                if cycle.date > now {
-                    add(
-                        center,
-                        id: "phone-at-\(record.id)-\(timestamp)",
-                        title: "\(record.name) 时间到了\(suffix)",
-                        body: "提醒时间 \(fmt(cycle.date))，快去看看",
-                        date: cycle.date
-                    )
-                }
-
-                let reminder = cycle.date.addingTimeInterval(-2 * 60)
+                let reminder = cycle.date.addingTimeInterval(-1 * 60)
                 if reminder > now {
                     add(
                         center,
                         id: "phone-pre-\(record.id)-\(timestamp)",
                         title: "\(record.name) 即将到时间\(suffix)",
-                        body: "还有 2 分钟 · 提醒时间 \(fmt(cycle.date))",
+                        body: "还有 1 分钟 · 提醒时间 \(fmt(cycle.date))",
                         date: reminder
                     )
                 }

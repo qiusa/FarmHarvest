@@ -19,7 +19,7 @@ func formatDurationText(_ total: Int) -> String {
     return "\(m) 分钟"
 }
 
-/// 本地通知：到期前 2 分钟提醒（主 App 负责调度，Widget 不可发通知）
+/// 本地通知：到期前 1 分钟提醒（主 App 负责调度，Widget 不可发通知）
 /// 本地通知调度。必须是 class：UNUserNotificationCenterDelegate 继承自 NSObjectProtocol，
 /// enum / struct 无法遵循（报 "non-class type cannot conform to class protocol"）。
 final class CropNotifier: NSObject, UNUserNotificationCenterDelegate {
@@ -68,7 +68,7 @@ final class CropNotifier: NSObject, UNUserNotificationCenterDelegate {
     }
 
     /// 依据当前记录重排本地通知（每次记录变更都整表重排）。
-    /// 每次提醒排两条：到点提醒 + 提前 2 分钟预告。
+    /// 每次提醒只排一条：提前 1 分钟预告。
     /// identifier 必须带时间戳+类型区分 —— 否则同一 id 的多条请求会互相覆盖，
     /// 结果只有一条能发出来。
     static func reschedule(_ records: [CropRecord]) {
@@ -88,25 +88,15 @@ final class CropNotifier: NSObject, UNUserNotificationCenterDelegate {
                 let pos = (allSorted.firstIndex { $0.id == h.id } ?? 0) + 1
                 let nth = total > 1 ? "（第 \(pos)/\(total) 次）" : ""
 
-                // ① 到点提醒：这是用户最需要的那一条
-                if at > now {
-                    add(center,
-                        id: "at-\(r.id)-\(stamp)",
-                        title: "\(r.name) 时间到了\(nth)",
-                        body: "提醒时间 \(fmt(at))，快去看看",
-                        fire: at,
-                        badge: 1)
-                }
-
-                // ② 提前 2 分钟预告，留出反应时间
-                let pre = at.addingTimeInterval(-2 * 60)
+                // 提前 1 分钟通知，每次提醒只通知一次
+                let pre = at.addingTimeInterval(-1 * 60)
                 if pre > now {
                     add(center,
                         id: "pre-\(r.id)-\(stamp)",
                         title: "\(r.name) 即将到时间\(nth)",
-                        body: "还有 2 分钟 · 提醒时间 \(fmt(at))",
+                        body: "还有 1 分钟 · 提醒时间 \(fmt(at))",
                         fire: pre,
-                        badge: nil)
+                        badge: 1)
                 }
             }
         }
@@ -156,10 +146,8 @@ final class CropNotifier: NSObject, UNUserNotificationCenterDelegate {
 
             center.getPendingNotificationRequests { reqs in
                 out.append("已排程通知：\(reqs.count) 条")
-                // 到点通知（at-）与预告（pre-）分别计数，便于定位是哪一类没排上
-                let at = reqs.filter { $0.identifier.hasPrefix("at-") }.count
                 let pre = reqs.filter { $0.identifier.hasPrefix("pre-") }.count
-                out.append("其中到点 \(at) 条 · 预告 \(pre) 条")
+                out.append("其中提前 1 分钟 \(pre) 条")
                 let fmtS = DateFormatter()
                 fmtS.dateFormat = "MM-dd HH:mm"
                 let soon = reqs.compactMap { r -> String? in
