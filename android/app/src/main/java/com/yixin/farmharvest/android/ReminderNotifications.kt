@@ -31,7 +31,7 @@ object ReminderScheduler {
                 CHANNEL_NAME,
                 NotificationManager.IMPORTANCE_HIGH,
             ).apply {
-                description = "事项提醒时间到达前和到达时的通知"
+                description = "事项提醒时间到达前 1 分钟的通知"
                 enableVibration(true)
             },
         )
@@ -57,19 +57,7 @@ object ReminderScheduler {
             record.harvests.filterNot { it.harvested }.forEach { cycle ->
                 val position = all.indexOfFirst { it.id == cycle.id } + 1
                 val suffix = if (total > 1) "（第 $position/$total 次）" else ""
-                if (cycle.date > now) {
-                    val dueKey = "at|${record.id}|${cycle.id}"
-                    schedule(
-                        context,
-                        alarmManager,
-                        dueKey,
-                        cycle.date,
-                        "${record.name} 时间到了$suffix",
-                        "提醒时间 ${formatDateTime(cycle.date)}，快去看看",
-                    )
-                    newKeys += dueKey
-                }
-                val preDate = cycle.date - 2 * 60_000L
+                val preDate = cycle.date - 1 * 60_000L
                 if (preDate > now) {
                     val preKey = "pre|${record.id}|${cycle.id}"
                     schedule(
@@ -78,7 +66,7 @@ object ReminderScheduler {
                         preKey,
                         preDate,
                         "${record.name} 即将到时间$suffix",
-                        "还有 2 分钟 · 提醒时间 ${formatDateTime(cycle.date)}",
+                        "还有 1 分钟 · 提醒时间 ${formatDateTime(cycle.date)}",
                     )
                     newKeys += preKey
                 }
